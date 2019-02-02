@@ -48,6 +48,13 @@ struct buffer_t
         if (vkMapMemory(device, memory, 0, size, 0, &mapped) != VK_SUCCESS)
             return {};
 
+        VkMappedMemoryRange mappedRange{};
+        mappedRange.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+        mappedRange.memory = memory;
+        mappedRange.offset = 0;
+        mappedRange.size = VK_WHOLE_SIZE;
+        vkInvalidateMappedMemoryRanges(device, 1, &mappedRange);
+
         std::array<T, item_count> data;
         memcpy(data.data(), mapped, size);
 
