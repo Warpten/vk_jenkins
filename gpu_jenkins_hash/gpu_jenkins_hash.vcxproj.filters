@@ -30,12 +30,21 @@
     <ClInclude Include="gpu_jenkins_hash.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="input_file.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="gpu_jenkins_hash.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="lookup3.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="input_file.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

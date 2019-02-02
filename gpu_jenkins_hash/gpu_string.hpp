@@ -10,11 +10,12 @@ class gpu_allocator_string : public std::allocator<char>
 };
 
 // Use an allocator aligned to the integer boundary for strings uploaded to the GPU as a sequence of integers.
-class gpu_string : private std::basic_string<char, std::char_traits<char>, gpu_allocator_string>
+class gpu_string : public std::basic_string<char, std::char_traits<char>, gpu_allocator_string>
 {
     using base_t = std::basic_string<char, std::char_traits<char>, gpu_allocator_string>;
 
 public:
+    gpu_string() : base_t() { }
     gpu_string(const char* const str) : base_t(str) { }
 
     template <typename Alloc = std::allocator<int>>

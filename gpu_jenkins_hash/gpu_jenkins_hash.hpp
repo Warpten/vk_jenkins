@@ -7,6 +7,8 @@
 #include "uploaded_string.hpp"
 
 #include <vulkan/vulkan.h>
+#include <functional>
+#include <optional>
 
 struct Device {
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
@@ -33,10 +35,6 @@ struct QueueFamilyIndices {
     }
 };
 
-struct Buffer {
-    VkBuffer buffer;
-    VkDeviceMemory memory;
-};
 
 class JenkinsGpuHash {
 public:
@@ -44,7 +42,14 @@ public:
 
     void run();
 
+    template <typename F>
+    inline void setDataProvider(F f) {
+        _dataProvider = std::function<uint32_t(std::array<uploaded_string, 64>*)>(std::move(f));
+    }
+
 private:
+
+    std::function<uint32_t(std::array<uploaded_string, 64>*)> _dataProvider;
 
     VkInstance _instance;
     VkDebugUtilsMessengerEXT _debugMessenger;
@@ -63,10 +68,8 @@ private:
     uint32_t _currentFrame;
 
     struct Frame {
-        buffer_t<uint32_t> output;
-        buffer_t<uploaded_string> input;
-
-        Buffer stagingInput;
+        buffer_t<uploaded_string, 64> deviceBuffer;
+        buffer_t<uploaded_string, 64> hostBuffer;
 
         VkCommandBuffer commandBuffer;
 
@@ -97,7 +100,7 @@ private:
 
     void createCommandBuffers();
 
-    void submitWork();
+    bool submitWork(std::array<uploaded_string, 64uLL> data);
 
     void createBuffers();
 
