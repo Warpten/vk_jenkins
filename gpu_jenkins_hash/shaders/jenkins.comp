@@ -1,6 +1,6 @@
 #version 450
 
-// Each work group has 16 inputs.
+// Each work group has 64 inputs.
 // Each input is a 32-bytes value for a part of a string.
 // Say we want to compute the hashes of strings 'ABCD' and 'EFGH'.
 // Our input would be { 'ABCD', 'EFGH' }.
@@ -8,7 +8,7 @@
 //   Finally, output is written to HASH[gl_GlobalInvocationID.x].
 // And the work group is done.
 
-layout (local_size_x = 16, local_size_y = 16) in;
+layout (local_size_x = 64) in;
 
 struct input_words {
 	uint word_count; // Actual number of words provided (in terms of bytes)

@@ -18,9 +18,24 @@ struct buffer_t
     VkBuffer buffer;
     VkDeviceMemory memory;
 
-    uint32_t count;
+    uint32_t binding;
 
-    const uint32_t get_data_size() const {
-        return sizeof(T) * count;
+    VkDescriptorSet set;
+
+    void update(VkDevice device)
+    {
+        VkWriteDescriptorSet writeDescriptorSet{};
+        writeDescriptorSet.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writeDescriptorSet.dstSet = set;
+        writeDescriptorSet.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writeDescriptorSet.descriptorCount = 1;
+
+        writeDescriptorSet.dstBinding = binding;
+
+        VkDescriptorBufferInfo bufferInfo { buffer, 0, VK_WHOLE_SIZE };
+
+        writeDescriptorSet.pBufferInfo = &bufferInfo;
+
+        vkUpdateDescriptorSets(device, 1, &writeDescriptorSet, 0, nullptr);
     }
 };

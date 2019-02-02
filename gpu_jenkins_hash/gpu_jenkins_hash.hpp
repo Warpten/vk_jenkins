@@ -25,11 +25,6 @@ struct Pipeline {
     VkPipelineLayout layout;
 };
 
-struct CommandPool {
-    VkCommandPool commandPool;
-    std::vector<VkCommandBuffer> commandBuffers;
-};
-
 struct QueueFamilyIndices {
     std::optional<uint32_t> computeFamily;
 
@@ -45,6 +40,8 @@ struct Buffer {
 
 class JenkinsGpuHash {
 public:
+    JenkinsGpuHash(uint32_t frameCount) : _frameCount(frameCount) { _frames.resize(frameCount); }
+
     void run();
 
 private:
@@ -58,17 +55,27 @@ private:
 
     Descriptor _descriptor;
 
-    // Buffer to which the compute shader writes.
-    std::vector<buffer_t<uint32_t>> _outputBuffers;
-    // Buffer from which the compute shader reads.
-    std::vector<buffer_t<uploaded_string>> _inputBuffers;
-
-    // Staging buffer to the input, host-visible (can be memory mapped)
-    std::vector<Buffer> _stagingBuffers;
-
     Pipeline _pipeline;
 
-    CommandPool _commandPool;
+    VkCommandPool _commandPool;
+
+    uint32_t _frameCount;
+    uint32_t _currentFrame;
+
+    struct Frame {
+        buffer_t<uint32_t> output;
+        buffer_t<uploaded_string> input;
+
+        Buffer stagingInput;
+
+        VkCommandBuffer commandBuffer;
+
+        VkSemaphore semaphore;
+
+        VkFence flightFence;
+    };
+
+    std::vector<Frame> _frames;
 
     void initVulkan();
 
@@ -88,13 +95,13 @@ private:
 
     void createCommandPool();
 
-    void createCommandBuffers(uint32_t frameCount = 1);
+    void createCommandBuffers();
 
     void submitWork();
 
-    void createBuffers(uint32_t frameCount = 1);
+    void createBuffers();
 
-    void uploadInput(std::vector<uploaded_string> const& input, uint32_t currentFrame);
+    void uploadInput(std::vector<uploaded_string> const& input);
 
     VkResult createBuffer(VkBufferUsageFlags usageFlags, VkMemoryPropertyFlags memoryPropertyFlags, VkBuffer *buffer, VkDeviceMemory *memory, VkDeviceSize size, void *data = nullptr);
 
@@ -110,6 +117,7 @@ private:
 
     static std::vector<char> readFile(const std::string& filename);
 
+    void createSyncObjects();
 };
 
 
