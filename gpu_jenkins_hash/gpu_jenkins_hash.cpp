@@ -420,13 +420,13 @@ void JenkinsGpuHash::createCommandBuffers()
         VkBufferMemoryBarrier bufferBarrier{};
         bufferBarrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
         bufferBarrier.buffer = _frames[i].deviceBuffer.buffer;
-        bufferBarrier.size = VK_WHOLE_SIZE;
-        bufferBarrier.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
+        bufferBarrier.size = copyRegion.size;
+        bufferBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         bufferBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
         bufferBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         bufferBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         vkCmdPipelineBarrier(_frames[i].commandBuffer,
-            VK_PIPELINE_STAGE_HOST_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT,
             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
             0,
             0, nullptr,
@@ -452,7 +452,7 @@ void JenkinsGpuHash::createCommandBuffers()
         bufferBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
         bufferBarrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
         bufferBarrier.buffer = _frames[i].deviceBuffer.buffer;
-        bufferBarrier.size = VK_WHOLE_SIZE;
+        bufferBarrier.size = copyRegion.size;
         bufferBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         bufferBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 
@@ -471,7 +471,7 @@ void JenkinsGpuHash::createCommandBuffers()
         bufferBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         bufferBarrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
         bufferBarrier.buffer = _frames[i].hostBuffer.buffer;
-        bufferBarrier.size = VK_WHOLE_SIZE;
+        bufferBarrier.size = copyRegion.size;
         bufferBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         bufferBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 
@@ -493,8 +493,11 @@ bool JenkinsGpuHash::submitWork(std::array<uploaded_string, 64uLL> inputData)
 {
     renderdoc::begin_frame();
 
+    vkWaitForFences(_device.device, 1, &_frames[_currentFrame].flightFence, VK_TRUE, UINT64_MAX);
     vkResetFences(_device.device, 1, &_frames[_currentFrame].flightFence);
 
+    // TODO: BUG 1: Buffer copies from the device to the host does not seem to work
+    auto previousOutputData = _frames[_currentFrame].hostBuffer.read(_device.device);
     _frames[_currentFrame].hostBuffer.write(_device.device, inputData);
 
     VkSubmitInfo submitInfo {};
@@ -510,16 +513,14 @@ bool JenkinsGpuHash::submitWork(std::array<uploaded_string, 64uLL> inputData)
     submitInfo.signalSemaphoreCount = 0;
     submitInfo.pSignalSemaphores = nullptr;
 
+    // TODO: BUG 2: vkQueueSubmit returns VK_ERROR_DEVICE_LOST the second time a given frame executes.
     VkResult result = vkQueueSubmit(_computeQueue, 1, &submitInfo, _frames[_currentFrame].flightFence);
     if (result != VK_SUCCESS)
         throw std::runtime_error(std::string{ "failed to submit command buffer! Frame #" } + std::to_string(_currentFrame));
 
-    vkWaitForFences(_device.device, 1, &_frames[_currentFrame].flightFence, VK_TRUE, UINT64_MAX);
-    auto outputData = _frames[_currentFrame].deviceBuffer.read(_device.device);
+    vkQueueWaitIdle(_computeQueue);
 
     renderdoc::end_frame();
-
-    vkDeviceWaitIdle(_device.device);
 
     _currentFrame = (_currentFrame + 1);
     if (_currentFrame == _frameCount)

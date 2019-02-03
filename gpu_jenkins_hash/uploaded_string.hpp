@@ -53,7 +53,8 @@ struct buffer_t
         mappedRange.memory = memory;
         mappedRange.offset = 0;
         mappedRange.size = size;
-        vkInvalidateMappedMemoryRanges(device, 1, &mappedRange);
+        if (vkInvalidateMappedMemoryRanges(device, 1, &mappedRange) != VK_SUCCESS)
+            throw std::runtime_error("Failed to invalidate memory");
 
         std::array<T, item_count> data;
         memcpy(data.data(), mapped, size);
@@ -76,7 +77,9 @@ struct buffer_t
         mappedRange.memory = memory;
         mappedRange.offset = 0;
         mappedRange.size = data.size();
-        vkFlushMappedMemoryRanges(device, 1, &mappedRange);
+        if (vkFlushMappedMemoryRanges(device, 1, &mappedRange) != VK_SUCCESS)
+            throw std::runtime_error("Failed to flush memory");
+
         vkUnmapMemory(device, memory);
     }
 };
