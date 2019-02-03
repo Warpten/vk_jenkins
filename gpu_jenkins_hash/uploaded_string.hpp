@@ -35,7 +35,7 @@ struct buffer_t
 
         writeDescriptorSet.dstBinding = binding;
 
-        VkDescriptorBufferInfo bufferInfo { buffer, 0, VK_WHOLE_SIZE };
+        VkDescriptorBufferInfo bufferInfo { buffer, 0, size };
 
         writeDescriptorSet.pBufferInfo = &bufferInfo;
 
@@ -52,7 +52,7 @@ struct buffer_t
         mappedRange.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
         mappedRange.memory = memory;
         mappedRange.offset = 0;
-        mappedRange.size = VK_WHOLE_SIZE;
+        mappedRange.size = size;
         vkInvalidateMappedMemoryRanges(device, 1, &mappedRange);
 
         std::array<T, item_count> data;

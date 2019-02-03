@@ -313,7 +313,7 @@ void JenkinsGpuHash::createComputePipeline()
     descriptorPoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     descriptorPoolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     descriptorPoolInfo.pPoolSizes = poolSizes.data();
-    descriptorPoolInfo.maxSets = 1;
+    descriptorPoolInfo.maxSets = _frameCount;
     if (vkCreateDescriptorPool(_device.device, &descriptorPoolInfo, nullptr, &_descriptor.pool) != VK_SUCCESS)
         throw std::runtime_error("failed to create descriptor pool");
 
@@ -407,6 +407,8 @@ void JenkinsGpuHash::createCommandBuffers()
 
         if (vkBeginCommandBuffer(_frames[i].commandBuffer, &beginInfo) != VK_SUCCESS)
             throw std::runtime_error("failed to begin recording command buffer!");
+
+        _frames[i].deviceBuffer.update(_device.device);
 
         VkBufferCopy copyRegion{};
         copyRegion.size = 64uLL * sizeof(uploaded_string);
@@ -516,6 +518,8 @@ bool JenkinsGpuHash::submitWork(std::array<uploaded_string, 64uLL> inputData)
     auto outputData = _frames[_currentFrame].deviceBuffer.read(_device.device);
 
     renderdoc::end_frame();
+
+    vkDeviceWaitIdle(_device.device);
 
     _currentFrame = (_currentFrame + 1);
     if (_currentFrame == _frameCount)
