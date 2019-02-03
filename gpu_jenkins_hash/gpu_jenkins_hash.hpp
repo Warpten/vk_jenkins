@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <vector>
 
-#include "gpu_string.hpp"
 #include "uploaded_string.hpp"
 
 #include <vulkan/vulkan.h>

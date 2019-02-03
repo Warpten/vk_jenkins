@@ -11,7 +11,7 @@
 layout (local_size_x = 64) in;
 
 struct input_words {
-	uint word_count; // Actual number of words provided (in terms of bytes)
+	uint char_count; // Number of bytes in the string
 	uint words[32 * 3]; // Maximum size: 32 * 3 * 32 = 3072 B.
 };
 
@@ -22,68 +22,68 @@ layout (std430, binding = 0) buffer _input_words {
 void main()
 {
 	uvec3 state;
-	state.x = 0xDEADBEEFu;
-	state.y = 0xDEADBEEFu;
-	state.z = 0xDEADBEEFu + INPUT[gl_GlobalInvocationID.x].word_count;
+	state.x = 0xDEADBEEFu + INPUT[gl_GlobalInvocationID.x].char_count;
+	state.y = state.x;
+	state.z = state.x;
 	
-	uint word_count = INPUT[gl_GlobalInvocationID.x].word_count;
-	uint aligned_word_count = ((word_count + 2) & ~2) - 3;
-	
-	for (uint i = 0; i < aligned_word_count; i += 3)
+	uint word_count = ((INPUT[gl_GlobalInvocationID.x].char_count + 3) & ~3) / 4;
+
+	uint i = 0;
+	for (; i < word_count - 3; i += 3)
 	{
 		state.x += INPUT[gl_GlobalInvocationID.x].words[i];
 		state.y += INPUT[gl_GlobalInvocationID.x].words[i + 1];
 		state.z += INPUT[gl_GlobalInvocationID.x].words[i + 2];
 
-		state.x -= state.z;
-		state.x ^= (state.z << 4) | (state.z >> 28);
-		state.z += state.y;
+		state.x -= state.z;                          // a -= c
+		state.x ^= (state.z << 4) | (state.z >> 28); // a ^= rot(c, 4)
+		state.z += state.y;                          // c += b
 		
-		state.y -= state.x;
-		state.y ^= (state.x << 6) | (state.x >> 26);
-		state.x += state.z;
+		state.y -= state.x; 						 // b -= a
+		state.y ^= (state.x << 6) | (state.x >> 26); // b ^= rot(a, 6)
+		state.x += state.z;                          // a += c
 		
-		state.z -= state.y;
-		state.z ^= (state.y << 8) | (state.y >> 24);
-		state.y += state.x;
+		state.z -= state.y;                          // c -= b
+		state.z ^= (state.y << 8) | (state.y >> 24); // c ^= rot(b, 8)
+		state.y += state.x;							 // b += a
 		
-		state.x -= state.z;
-		state.x ^= (state.z << 16) | (state.z >> 16);
-		state.z += state.y;
+		state.x -= state.z;                          // a -= c
+		state.x ^= (state.z << 16) | (state.z >> 16);// a ^= rot(c, 16)
+		state.z += state.y;                          // c += b
 		
-		state.y -= state.x;
-		state.y ^= (state.x << 19) | (state.x >> 13);
-		state.x += state.z;
+		state.y -= state.x;                          // b -= a
+		state.y ^= (state.x << 19) | (state.x >> 13);// b ^= rot(a, 19)
+		state.x += state.z;                          // a += c
 		
-		state.z -= state.y;
-		state.z ^= (state.y << 4) | (state.y >> 28);
-		state.y += state.x;
+		state.z -= state.y;                          // c -= b
+		state.z ^= (state.y << 4) | (state.y >> 28); // c ^= rot(b, 4)
+		state.y += state.x;                          // b += a
 	}
 
-	// We made sure to properly align on the cpu
-	for (uint i = aligned_word_count; i < word_count; i++)
-		state[i] += INPUT[gl_GlobalInvocationID.x].words[i - aligned_word_count];
+	state.x += INPUT[gl_GlobalInvocationID.x].words[i];
+	state.y += INPUT[gl_GlobalInvocationID.x].words[i + 1];
+	state.z += INPUT[gl_GlobalInvocationID.x].words[i + 2];
 	
-	state.z ^= state.y;
-	state.z -= (state.y << 14) | (state.y >> 18);
+	state.z ^= state.y;							  // c ^= b
+	state.z -= (state.y << 14) | (state.y >> 18); // c -= rot(b, 14)
+    
+	state.x ^= state.z;							  // a ^= c
+	state.x -= (state.z << 11) | (state.z >> 21); // a -= rot(c, 11)
+    
+	state.y ^= state.x;							  // b ^= a
+	state.y -= (state.x << 25) | (state.x >> 7);  // b -= rot(a, 25)
+    
+	state.z ^= state.y;							  // c ^= b
+	state.z -= (state.y << 16) | (state.y >> 16); // c -= rot(b, 16)
+    
+	state.x ^= state.z;							  // a ^= c
+	state.x -= (state.z << 4) | (state.z >> 28);  // a -= rot(c, 4)
+    
+	state.y ^= state.x;							  // b ^= a
+	state.y -= (state.x << 14) | (state.x >> 18); // b -= rot(a, 14)
+    
+	state.z ^= state.y;							  // c ^= b
+	state.z -= (state.y << 24) | (state.y >> 8);  // c -= rot(b, 24)
 
-	state.x ^= state.z;
-	state.x -= (state.z << 11) | (state.z >> 21);
-
-	state.y ^= state.x;
-	state.y -= (state.x << 25) | (state.x >> 7);
-
-	state.z ^= state.y;
-	state.z -= (state.y << 16) | (state.y >> 16);
-
-	state.x ^= state.z;
-	state.x -= (state.z << 4) | (state.z >> 28);
-
-	state.y ^= state.x;
-	state.y -= (state.x << 14) | (state.x >> 18);
-
-	state.z ^= state.y;
-	state.z -= (state.y << 24) | (state.y >> 8);
-
-	INPUT[gl_GlobalInvocationID.x].word_count = state.z;
+	INPUT[gl_GlobalInvocationID.x].char_count = state.z;
 }

@@ -7,7 +7,7 @@ input_file::input_file(const char* fpath) {
     if (!fs.is_open())
         return;
 
-    gpu_string line;
+    std::string line;
     while (std::getline(fs, line))
         values.emplace_back(line);
 }

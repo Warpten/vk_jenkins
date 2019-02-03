@@ -19,8 +19,8 @@ int main() {
             uploaded_string& element = (*data)[i];
 
             auto item = input[inputIndex++];
-            element.word_count = item.aligned_size() / 4;
-            memcpy(element.words, item.integer_data(), item.aligned_size());
+            element.word_count = item.size();
+            memcpy(element.words, item.data(), item.size());
         }
 
         return i;
