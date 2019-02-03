@@ -9,7 +9,7 @@
 int main() {
     input_file input("shaders/input.txt");
 
-    JenkinsGpuHash app(3);
+    JenkinsGpuHash app(1);
 
     uint32_t inputIndex = 0;
 
@@ -33,6 +33,11 @@ int main() {
         std::cerr << e.what() << std::endl;
         return EXIT_FAILURE;
     }
+
+    std::cout << "Done press a key to exit" << std::endl;
+
+    int x;
+    std::cin >> x;
 
     return EXIT_SUCCESS;
 }
