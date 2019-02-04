@@ -4,7 +4,7 @@
 // Say we want to compute the hashes of strings 'ABCD' and 'EFGH'.
 // Our input would be { 'ABCD', 'EFGH' }.
 //   Each invocation of the shader within the work group then operates on INPUT[gl_GlobalInvocationID.x].
-//   Finally, output is written to HASH[gl_GlobalInvocationID.x].
+//   Finally, output is written to INPUT[gl_GlobalInvocationID.x].hash.
 // And the work group is done.
 
 // This size is a specialization constant and fed through pipeline creation. The default value is 64.
@@ -13,7 +13,7 @@ layout(local_size_y = 1) in;
 layout(local_size_z = 1) in;
 
 struct input_words {
-	uint char_count; // Number of bytes in the string
+	int char_count; // Number of bytes in the string
 	uint hash;
 	uint words[32 * 3]; // Maximum size: 32 * 3 * 32 = 3072 B.
 };
@@ -32,9 +32,13 @@ void main()
 	state.y = state.x;
 	state.z = state.x;
 	
-	uint word_count = ((INPUT[gl_GlobalInvocationID.x].char_count + 3) & ~3) / 4;
+	// Compute the amount of integers on which the characters fit
+	// (x + 3) & ~3 is basically aligning x **up** to the closest multiple of 4.
+	// We then divide by 4 to obtain the amount of integers with actual data in words[].
+	
+	int word_count = ((INPUT[gl_GlobalInvocationID.x].char_count + 3) & ~3) / 4;
 
-	uint i = 0;
+	int i = 0;
 	for (; i < word_count - 3; i += 3)
 	{
 		state.x += INPUT[gl_GlobalInvocationID.x].words[i];
@@ -66,6 +70,9 @@ void main()
 		state.y += state.x;                          // b += a
 	}
 
+	// The final round of the hash just adds values to the state again, but this time
+	// the avalanche differs, and it's completely irrelevant to wether or not there were
+	// padding zeros there.
 	state.x += INPUT[gl_GlobalInvocationID.x].words[i];
 	state.y += INPUT[gl_GlobalInvocationID.x].words[i + 1];
 	state.z += INPUT[gl_GlobalInvocationID.x].words[i + 2];

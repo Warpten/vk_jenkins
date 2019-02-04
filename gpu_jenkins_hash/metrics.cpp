@@ -30,7 +30,7 @@ namespace metrics {
 
         // get number of milliseconds for the current second
         // (remainder after division into seconds)
-        auto c = std::chrono::duration_cast<std::chrono::milliseconds>(_end - _start).count();
+        auto c = std::chrono::duration_cast<std::chrono::nanoseconds>(_end - _start).count();
 
         std::ostringstream oss;
         oss << std::setfill('0')          // set field fill character to '0'

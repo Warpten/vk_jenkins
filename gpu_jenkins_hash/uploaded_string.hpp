@@ -6,12 +6,12 @@
 
 #pragma pack(push, 1)
 struct uploaded_string {
-    uint32_t word_count = 0;
+    uint32_t char_count = 0;
     uint32_t hash = 0;
     uint32_t words[32 * 3] = {0};
 
     std::string value() const {
-        return std::string(reinterpret_cast<const char*>(words), word_count);
+        return std::string(reinterpret_cast<const char*>(words), char_count);
     }
 };
 #pragma pack(pop)
@@ -105,6 +105,7 @@ struct buffer_t
         std::vector<T> oldData(item_count);
         memcpy(oldData.data(), mapped, size());
 
+        memset(mapped, 0, max_size);
         memcpy(mapped, newData.data(), newData.size() * sizeof(T));
         item_count = (uint32_t)newData.size();
 
@@ -144,6 +145,7 @@ struct buffer_t
                 return;
         }
 
+        memset(mapped, 0, max_size);
         memcpy(mapped, data.data(), data.size() * sizeof(T));
         item_count = (uint32_t)data.size();
 

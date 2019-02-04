@@ -9,6 +9,8 @@
 #include "uploaded_string.hpp"
 #include "metrics.hpp"
 
+#include "lookup3.hpp"
+
 struct options_t {
 private:
     std::vector<char*> _vals;
@@ -119,7 +121,9 @@ int main(int argc, char* argv[]) {
             uploaded_string& element = (*data)[i];
 
             auto item = input.next();
-            element.word_count = (uint32_t)item.size();
+            element.char_count = (uint32_t)item.size();
+
+            memset(element.words, 0, sizeof(element.words));
             memcpy(element.words, item.data(), item.size());
         }
 
@@ -132,7 +136,15 @@ int main(int argc, char* argv[]) {
         if (data->size() == 0)
             return;
 
-        output.insert(output.end(), data->begin(), data->end());
+        for (uploaded_string const& itr : *data)
+        {
+            uint32_t gpuHash = itr.hash;
+            uint32_t cpuHash = hashlittle((const void*)itr.value().c_str(), itr.char_count, 0);
+            if (gpuHash != cpuHash)
+                std::cout << "Invalid hash for " << itr.value() << " (got " << std::hex << gpuHash << ", expected " << cpuHash << ")" << std::endl;
+        }
+
+        //output.insert(output.end(), data->begin(), data->end());
         data->resize(0);
     });
 
@@ -155,7 +167,7 @@ int main(int argc, char* argv[]) {
     }*/
 
     std::cout << "Hash rate: "
-        << metrics::hashes_per_second() << " hashes per second ("
+        << std::dec << uint64_t(metrics::hashes_per_second()) << " hashes per second ("
         << std::dec << metrics::total() << " hashes expected, "
         << output.size() << " total, "
         << metrics::elapsed_time().c_str() << " s)" << std::endl;

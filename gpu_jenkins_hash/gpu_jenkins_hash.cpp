@@ -114,7 +114,7 @@ void JenkinsGpuHash::mainLoop()
 
             result = submitWork(data, true);
             if (result != VK_SUCCESS)
-                goto error_handling;
+                throw std::runtime_error("vkQueueSubmit failed");
         }
 
         _currentFrame = 0;
@@ -126,7 +126,7 @@ void JenkinsGpuHash::mainLoop()
 
             result = submitWork(data);
             if (result != VK_SUCCESS)
-                goto error_handling;
+                throw std::runtime_error("vkQueueSubmit failed");
         }
 
         // We may have left the loop because we got no data to send,
@@ -145,17 +145,11 @@ void JenkinsGpuHash::mainLoop()
                 _currentFrame = 0;
         }
 
-        goto exit_normally;
-
-    error_handling:
-        throw std::runtime_error("vkQueueSubmit failed");
+        metrics::stop();
     }
     catch (std::exception const& e) {
         std::cerr << e.what() << std::endl;
     }
-
-exit_normally:
-    metrics::stop();
 
     vkDeviceWaitIdle(_device.device);
 }
@@ -527,17 +521,15 @@ void JenkinsGpuHash::createCommandBuffers()
         copyRegion.srcOffset = 0;
         vkCmdCopyBuffer(frame.commandBuffer, frame.hostBuffer.buffer, frame.deviceBuffer.buffer, 1, &copyRegion);
 
-        // Barrier for cmdCopyBuffer above
         VkBufferMemoryBarrier bufferBarrier{};
         bufferBarrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
         bufferBarrier.buffer = frame.deviceBuffer.buffer;
         bufferBarrier.size = VK_WHOLE_SIZE;
-        bufferBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        bufferBarrier.buffer = frame.deviceBuffer.buffer;
+        bufferBarrier.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
         bufferBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        bufferBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        bufferBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         vkCmdPipelineBarrier(frame.commandBuffer,
-            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_HOST_BIT,
             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
             0,
             0, nullptr,
@@ -623,7 +615,6 @@ VkResult JenkinsGpuHash::submitWork(std::vector<uploaded_string> const& inputDat
     _currentFrame = (_currentFrame + 1);
     if (_currentFrame == _frames.size()) {
         _currentFrame = 0;
-        vkDeviceWaitIdle(_device.device);
     }
 
     // We don't really care WHEN stuff is done, we just keep track of HOW MANY are done
