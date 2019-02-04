@@ -1,6 +1,5 @@
 #version 450
 
-// Each work group has 64 inputs.
 // Each input is a string in FourCC format, up to 32 indivual FourCC
 // Say we want to compute the hashes of strings 'ABCD' and 'EFGH'.
 // Our input would be { 'ABCD', 'EFGH' }.
@@ -8,7 +7,10 @@
 //   Finally, output is written to HASH[gl_GlobalInvocationID.x].
 // And the work group is done.
 
-layout (local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+// This size is a specialization constant and fed through pipeline creation. The default value is 64.
+layout(local_size_x_id = 1) in;               
+layout(local_size_y = 1) in;
+layout(local_size_z = 1) in;
 
 struct input_words {
 	uint char_count; // Number of bytes in the string

@@ -37,7 +37,7 @@ struct QueueFamilyIndices {
 
 class JenkinsGpuHash {
 public:
-    JenkinsGpuHash(uint32_t frameCount) { 
+    JenkinsGpuHash(uint32_t frameCount) {
 		_frames.resize(frameCount);
 
 		createInstance();
@@ -50,7 +50,7 @@ public:
 
 	template <typename F>
 	inline void setDataProvider(F f) {
-		_dataProvider = std::function<uint32_t(std::vector<uploaded_string>*)>(std::move(f));
+		_dataProvider = std::function<void(std::vector<uploaded_string>*)>(std::move(f));
 	}
 
 	template <typename F>
@@ -60,11 +60,16 @@ public:
 
 	struct params_t {
 		uint32_t workgroupCount = 0;
+        uint32_t workgroupSize = 64;
 	};
 
 	void setWorkgroupCount(uint32_t size) {
 		params.workgroupCount = std::min(_device.properties.limits.maxComputeWorkGroupCount[0], size);
 	}
+
+    void setWorkgroupSize(uint32_t size) {
+        params.workgroupSize = std::min(_device.properties.limits.maxComputeWorkGroupSize[0], size);
+    }
 
 	params_t const& getParams() { return params; }
 
@@ -72,7 +77,7 @@ private:
 
 	params_t params;
 
-    std::function<uint32_t(std::vector<uploaded_string>*)> _dataProvider;
+    std::function<void(std::vector<uploaded_string>*)> _dataProvider;
 	std::function<void(std::vector<uploaded_string>*, uint32_t)> _outputHandler;
 
     VkInstance _instance;
@@ -130,7 +135,7 @@ private:
 
     void createCommandBuffers();
 
-    bool submitWork(std::vector<uploaded_string> const& data, uint64_t count, bool first = false);
+    bool submitWork(std::vector<uploaded_string> const& data, bool first = false);
 
     void createBuffers();
 

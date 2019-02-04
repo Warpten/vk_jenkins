@@ -46,10 +46,10 @@ void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT
 
 void JenkinsGpuHash::run()
 {
+    createCommandPool();
 	createBuffers();
 
 	createComputePipeline();
-	createCommandPool();
 	createSyncObjects();
 
 	createCommandBuffers();
@@ -63,13 +63,16 @@ void JenkinsGpuHash::run()
 void JenkinsGpuHash::createBuffers()
 {
     for (Frame& frame : _frames) {
+        frame.hostBuffer.setMaximumElementCount(params.workgroupCount, params.workgroupSize);
+        frame.deviceBuffer.setMaximumElementCount(params.workgroupCount, params.workgroupSize);
+
         // Staging buffer
         createBuffer(
             VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
             &frame.hostBuffer.buffer,
             &frame.hostBuffer.memory,
-			frame.hostBuffer.max_size);
+            frame.hostBuffer.max_size);
 
         // Device buffer
         createBuffer(
@@ -77,62 +80,60 @@ void JenkinsGpuHash::createBuffers()
             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
             &frame.deviceBuffer.buffer,
             &frame.deviceBuffer.memory,
-			frame.deviceBuffer.max_size);
+            frame.deviceBuffer.max_size);
 
         // Input buffer on binding 0
-		frame.deviceBuffer.binding = 0;
+        frame.deviceBuffer.binding = 0;
+
     }
 
-	createBuffer(
-		VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-		&dispatchBuffer.buffer,
-		&dispatchBuffer.memory,
-		sizeof(VkDispatchIndirectCommand));
-
-	std::vector<VkDispatchIndirectCommand> dispatch_args {
-		VkDispatchIndirectCommand {params.workgroupCount, 1, 1 }
-	};
-	dispatchBuffer.write(_device.device, dispatch_args);
+    createBuffer(
+        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        &dispatchBuffer.buffer,
+        &dispatchBuffer.memory,
+        sizeof(VkDispatchIndirectCommand));
 }
 
 void JenkinsGpuHash::mainLoop()
 {
-	auto provide_data = [this](uint32_t& count, std::vector<uploaded_string>* data) -> void {
-		count = this->_dataProvider(data);
+	auto provide_data = [this](std::vector<uploaded_string>* data) -> void {
+		this->_dataProvider(data);
 	};
 	try {
 		metrics::start();
 
 		// First iteration of each frame
-		uint32_t count;
-		std::vector<uploaded_string> data(params.workgroupCount * 64uLL);
+		std::vector<uploaded_string> data(params.workgroupCount * params.workgroupSize);
 		for (Frame& frame : _frames) {
 
-			provide_data(count, &data);
+			provide_data(&data);
 
-			submitWork(data, count, true);
+			submitWork(data, true);
 		}
 
 		while (true) {
-			provide_data(count, &data);
-			if (count == 0) {
+			provide_data(&data);
+			if (data.size() == 0)
 				break;
-			}
 
-			submitWork(data, count);
+			submitWork(data);
 		}
 
 		// We may have left the loop because we got no data to send,
 		// but there is still some data left in the pipe
 		// We thus must iterate a third time, but just collect data
-		for (Frame& frame : _frames) {
+        for (uint32_t i = 0; i < _frames.size(); ++i) {
+            Frame& frame = _frames[_currentFrame++];
+
 			vkWaitForFences(_device.device, 1, &frame.flightFence, VK_TRUE, UINT64_MAX);
 
 			auto frameOutput = frame.hostBuffer.read(_device.device);
-			if (frameOutput.size() == 0)
-				continue;
-			_outputHandler(&frameOutput, frame.hostBuffer.item_count);
+			if (frameOutput.size() > 0)
+			    _outputHandler(&frameOutput, frame.hostBuffer.item_count);
+
+            if (_currentFrame == _frames.size())
+                _currentFrame = 0;
 		}
 
 		metrics::stop();
@@ -396,12 +397,26 @@ void JenkinsGpuHash::createComputePipeline()
     auto computeShaderCode = readFile("shaders/comp.spv");
     VkShaderModule computeShaderModule = createShaderModule(computeShaderCode);
 
+    std::vector<VkSpecializationMapEntry> specMapEntries {
+        VkSpecializationMapEntry { 1, 0, 4 } // Constant ID, offset, size
+    };
+
+    VkSpecializationInfo shaderSpecInfo{};
+    shaderSpecInfo.mapEntryCount = specMapEntries.size();
+    shaderSpecInfo.pMapEntries = specMapEntries.data();
+
+    std::vector<uint32_t> workgroupSizes { params.workgroupSize };
+
+    shaderSpecInfo.dataSize = workgroupSizes.size() * sizeof(decltype(workgroupSizes)::value_type);
+    shaderSpecInfo.pData = workgroupSizes.data();
+
     // Pipeline shader stage info.
     VkPipelineShaderStageCreateInfo compShaderStageInfo{};
     compShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     compShaderStageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
     compShaderStageInfo.module = computeShaderModule;
     compShaderStageInfo.pName = "main";
+    compShaderStageInfo.pSpecializationInfo = &shaderSpecInfo;
 
     // Create the pipeline
     VkComputePipelineCreateInfo pipelineInfo{};
@@ -414,6 +429,50 @@ void JenkinsGpuHash::createComputePipeline()
         throw std::runtime_error("failed to create graphics pipeline!");
 
     vkDestroyShaderModule(_device.device, computeShaderModule, nullptr);
+
+    { // Upload the constants for indirect dispatch now that we have a pipeline
+        renderdoc::begin_frame();
+
+        VkCommandBuffer uploadCmd;
+
+        // Reuse the first frame's staging buffer for this upload
+        VkDispatchIndirectCommand dispatch_args{ params.workgroupCount, 1, 1 };
+        _frames[0].hostBuffer.write_raw(_device.device, &dispatch_args, sizeof(VkDispatchIndirectCommand));
+
+        VkCommandBufferAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocInfo.commandPool = _commandPool;
+        allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocInfo.commandBufferCount = 1;
+        vkAllocateCommandBuffers(_device.device, &allocInfo, &uploadCmd);
+
+        VkCommandBufferBeginInfo beginInfo{};
+        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
+
+        if (vkBeginCommandBuffer(uploadCmd, &beginInfo) != VK_SUCCESS)
+            throw std::runtime_error("failed to begin recording command buffer!");
+
+        VkBufferCopy copyRegion{};
+        copyRegion.size = sizeof(VkDispatchIndirectCommand);
+        copyRegion.dstOffset = 0;
+        copyRegion.srcOffset = 0;
+        vkCmdCopyBuffer(uploadCmd, _frames[0].hostBuffer.buffer, dispatchBuffer.buffer, 1, &copyRegion);
+
+        vkEndCommandBuffer(uploadCmd);
+
+        VkSubmitInfo submitInfo{};
+        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submitInfo.pCommandBuffers = &uploadCmd;
+        submitInfo.commandBufferCount = 1;
+
+        vkQueueSubmit(_computeQueue, 1, &submitInfo, VK_NULL_HANDLE);
+        renderdoc::end_frame();
+
+        vkQueueWaitIdle(_computeQueue);
+
+        vkFreeCommandBuffers(_device.device, _commandPool, 1, &uploadCmd);
+    }
 }
 
 void JenkinsGpuHash::createCommandPool()
@@ -523,13 +582,13 @@ void JenkinsGpuHash::createCommandBuffers()
     }
 }
 
-bool JenkinsGpuHash::submitWork(std::vector<uploaded_string> const& inputData, uint64_t count, bool first)
+bool JenkinsGpuHash::submitWork(std::vector<uploaded_string> const& inputData, bool first)
 {
     renderdoc::begin_frame();
 
 	vkWaitForFences(_device.device, 1, &_frames[_currentFrame].flightFence, VK_TRUE, UINT64_MAX);
     vkResetFences(_device.device, 1, &_frames[_currentFrame].flightFence);
-	
+
 	if (!first) {
 		auto previousOutputData = _frames[_currentFrame].hostBuffer.swap(_device.device, inputData);
 		_outputHandler(&previousOutputData, previousOutputData.size());
@@ -546,8 +605,6 @@ bool JenkinsGpuHash::submitWork(std::vector<uploaded_string> const& inputData, u
     if (result != VK_SUCCESS)
         throw std::runtime_error(std::string{ "failed to submit command buffer! Frame #" } + std::to_string(_currentFrame));
 
-    vkQueueWaitIdle(_computeQueue);
-
     renderdoc::end_frame();
 
     _currentFrame = (_currentFrame + 1);
@@ -555,7 +612,7 @@ bool JenkinsGpuHash::submitWork(std::vector<uploaded_string> const& inputData, u
         _currentFrame = 0;
 
 	// We don't really care WHEN stuff is done, we just keep track of HOW MANY are done
-	metrics::increment(count);
+	metrics::increment(inputData.size());
     return true;
 }
 

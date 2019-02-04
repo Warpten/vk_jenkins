@@ -24,16 +24,26 @@ struct buffer_t
     VkDeviceMemory memory = VK_NULL_HANDLE;
 	VkDescriptorSet set = VK_NULL_HANDLE;
 
+    void* mapped = nullptr;
+
     uint32_t binding = 0;
 	uint32_t item_count = 0;
+    uint32_t max_size = sizeof(T);
+
+    void setMaximumElementCount(uint32_t workgroup_count, uint32_t workgroup_size) {
+        max_size = sizeof(T) * workgroup_size * workgroup_count;
+    }
 
 	uint32_t size() {
 		return uint32_t(item_count * sizeof(T));
 	}
 
-	constexpr static const size_t max_size = 256 * sizeof(T);
+    void release(VkDevice device) {
+        if (mapped != nullptr) {
+            vkUnmapMemory(device, memory);
+            mapped = nullptr;
+        }
 
-	void release(VkDevice device) {
 		vkFreeMemory(device, memory, nullptr);
 		vkDestroyBuffer(device, buffer, nullptr);
 	}
@@ -57,9 +67,11 @@ struct buffer_t
 
     std::vector<T> read(VkDevice device)
     {
-        void* mapped;
-        if (vkMapMemory(device, memory, 0, size(), 0, &mapped) != VK_SUCCESS)
-            return {};
+        if (mapped == nullptr)
+        {
+            if (vkMapMemory(device, memory, 0, max_size, 0, &mapped) != VK_SUCCESS)
+                return {};
+        }
 
         VkMappedMemoryRange mappedRange{};
         mappedRange.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
@@ -72,17 +84,15 @@ struct buffer_t
         std::vector<T> data(item_count);
         memcpy(data.data(), mapped, size());
 
-        vkUnmapMemory(device, memory);
         return data;
     }
 
 	std::vector<T> swap(VkDevice device, std::vector<T> newData) {
-		if (newData.size() * sizeof(T) > max_size)
-			throw std::runtime_error("batches too large");
-
-		void* mapped;
-		if (vkMapMemory(device, memory, 0, newData.size() * sizeof(T), 0, &mapped) != VK_SUCCESS)
-			return {};
+        if (mapped == nullptr)
+        {
+            if (vkMapMemory(device, memory, 0, max_size, 0, &mapped) != VK_SUCCESS)
+                return {};
+        }
 
 		VkMappedMemoryRange mappedRange{};
 		mappedRange.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
@@ -103,18 +113,36 @@ struct buffer_t
 		if (vkFlushMappedMemoryRanges(device, 1, &mappedRange) != VK_SUCCESS)
 			throw std::runtime_error("Failed to flush memory");
 
-		vkUnmapMemory(device, memory);
 		return oldData;
 	}
 
+    void write_raw(VkDevice device, void* data, size_t size)
+    {
+        if (mapped == nullptr)
+        {
+            if (vkMapMemory(device, memory, 0, max_size, 0, &mapped) != VK_SUCCESS)
+                return;
+        }
+
+        memcpy(mapped, data, size);
+
+        // Flush writes to the device
+        VkMappedMemoryRange mappedRange{};
+        mappedRange.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+        mappedRange.memory = memory;
+        mappedRange.offset = 0;
+        mappedRange.size = VK_WHOLE_SIZE;
+        if (vkFlushMappedMemoryRanges(device, 1, &mappedRange) != VK_SUCCESS)
+            throw std::runtime_error("Failed to flush memory");
+    }
+
     void write(VkDevice device, std::vector<T> data)
     {
-		if (data.size() * sizeof(T) > max_size)
-			throw std::runtime_error("batches too large");
-
-        void* mapped;
-        if (vkMapMemory(device, memory, 0, data.size() * sizeof(T), 0, &mapped) != VK_SUCCESS)
-            return;
+        if (mapped == nullptr)
+        {
+            if (vkMapMemory(device, memory, 0, max_size, 0, &mapped) != VK_SUCCESS)
+                return;
+        }
 
         memcpy(mapped, data.data(), data.size() * sizeof(T));
 		item_count = (uint32_t)data.size();
@@ -128,6 +156,5 @@ struct buffer_t
         if (vkFlushMappedMemoryRanges(device, 1, &mappedRange) != VK_SUCCESS)
             throw std::runtime_error("Failed to flush memory");
 
-        vkUnmapMemory(device, memory);
     }
 };

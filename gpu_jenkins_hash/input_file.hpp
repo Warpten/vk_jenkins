@@ -2,18 +2,24 @@
 
 #include <string>
 #include <vector>
+#include <fstream>
 
 struct input_file
 {
 public:
     input_file(const char* fpath);
 
-    std::string const& operator[] (size_t index) const {
-        return values[index];
+    std::string next() {
+        std::string tmp = nextLine;
+        std::getline(fs, nextLine);
+        return tmp;
     }
 
-    size_t const size() const { return values.size(); }
+    bool hasNext() {
+        return nextLine.size() > 0 || !fs.eof();
+    }
 
 private:
-    std::vector<std::string> values;
+    std::fstream fs;
+    std::string nextLine;
 };
