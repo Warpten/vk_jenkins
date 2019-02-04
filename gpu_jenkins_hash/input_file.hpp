@@ -11,12 +11,13 @@ public:
 
     std::string next() {
         std::string tmp = nextLine;
-        std::getline(fs, nextLine);
+        if (!std::getline(fs, nextLine))
+            nextLine.clear();
         return tmp;
     }
 
     bool hasNext() {
-        return nextLine.size() > 0 || !fs.eof();
+        return nextLine.size() > 0;
     }
 
 private:

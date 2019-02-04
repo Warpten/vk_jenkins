@@ -55,7 +55,7 @@ public:
 
 	template <typename F>
 	inline void setOutputHandler(F f) {
-		_outputHandler = std::function<void(std::vector<uploaded_string>*, uint32_t)>(std::move(f));
+		_outputHandler = std::function<void(std::vector<uploaded_string>*)>(std::move(f));
 	}
 
 	struct params_t {
@@ -78,7 +78,7 @@ private:
 	params_t params;
 
     std::function<void(std::vector<uploaded_string>*)> _dataProvider;
-	std::function<void(std::vector<uploaded_string>*, uint32_t)> _outputHandler;
+	std::function<void(std::vector<uploaded_string>*)> _outputHandler;
 
     VkInstance _instance;
     VkDebugUtilsMessengerEXT _debugMessenger;

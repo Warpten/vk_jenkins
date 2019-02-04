@@ -126,13 +126,13 @@ int main(int argc, char* argv[]) {
 		data->resize(i);
     });
 
-	std::vector<uploaded_string> output;
-	app.setOutputHandler([&output](std::vector<uploaded_string>* data, uint32_t actualCount) -> void {
+    std::vector<uploaded_string> output;
+	app.setOutputHandler([&output](std::vector<uploaded_string>* data) -> void {
 		// No-op for the first call of each frame
-		if (actualCount == 0)
-			return;
+        if (data->size() == 0)
+            return;
 
-		std::move(data->begin(), data->begin() + actualCount, std::back_inserter(output));
+        output.insert(output.end(), data->begin(), data->end());
 		data->resize(0);
 	});
 
@@ -145,19 +145,19 @@ int main(int argc, char* argv[]) {
     }
 
 	std::set<uint32_t> map;
-	for (uploaded_string const& str : output) {
+	/*for (uploaded_string const& str : output) {
 
-		if (map.find(str.hash) != map.end())
-			throw std::runtime_error(str.value() + ": duplicate values returned by hasher!");
+		///if (map.find(str.hash) != map.end())
+		///	throw std::runtime_error(str.value() + ": duplicate values returned by hasher!");
 
 		map.insert(str.hash);
 		// std::cout << "0x" << std::setfill('0') << std::setw(8) << std::hex << str.hash << " = '" << str.value() << "';\n";
-	}
+	}*/
 
 	std::cout << "Hash rate: "
 		<< metrics::hashes_per_second() << " hashes per second ("
 		<< std::dec << metrics::total() << " hashes expected, "
-		<< map.size() << " total, "
+		<< output.size() << " total, "
 		<< metrics::elapsed_time().c_str() << " s)" << std::endl;
 	std::cout << "Done! Press a key to exit" << std::endl;
 

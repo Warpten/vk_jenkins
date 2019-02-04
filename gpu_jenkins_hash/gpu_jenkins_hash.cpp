@@ -106,11 +106,14 @@ void JenkinsGpuHash::mainLoop()
 		// First iteration of each frame
 		std::vector<uploaded_string> data(params.workgroupCount * params.workgroupSize);
 		for (Frame& frame : _frames) {
-
 			provide_data(&data);
+            if (data.size() == 0)
+                break;
 
 			submitWork(data, true);
 		}
+
+        _currentFrame = 0;
 
 		while (true) {
 			provide_data(&data);
@@ -130,7 +133,7 @@ void JenkinsGpuHash::mainLoop()
 
 			auto frameOutput = frame.hostBuffer.read(_device.device);
 			if (frameOutput.size() > 0)
-			    _outputHandler(&frameOutput, frame.hostBuffer.item_count);
+			    _outputHandler(&frameOutput);
 
             if (_currentFrame == _frames.size())
                 _currentFrame = 0;
@@ -591,7 +594,7 @@ bool JenkinsGpuHash::submitWork(std::vector<uploaded_string> const& inputData, b
 
 	if (!first) {
 		auto previousOutputData = _frames[_currentFrame].hostBuffer.swap(_device.device, inputData);
-		_outputHandler(&previousOutputData, previousOutputData.size());
+		_outputHandler(&previousOutputData);
 	} else {
 		_frames[_currentFrame].hostBuffer.write(_device.device, inputData);
 	}
