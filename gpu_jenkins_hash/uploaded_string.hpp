@@ -1,29 +1,42 @@
 #pragma once
 
 #include <cstdint>
-#include <array>
+#include <string>
 #include <vulkan/vulkan.h>
 
 #pragma pack(push, 1)
 struct uploaded_string {
     uint32_t word_count = 0;
+	uint32_t hash = 0;
     uint32_t words[32 * 3] = {0};
+
+	std::string value() const {
+		return std::string(reinterpret_cast<const char*>(words), word_count);
+	}
 };
 #pragma pack(pop)
 
-template <typename T, size_t N = 64>
+template <typename T>
 struct buffer_t
 {
     // The actual handle
-    VkBuffer buffer;
-    VkDeviceMemory memory;
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+	VkDescriptorSet set = VK_NULL_HANDLE;
 
-    uint32_t binding;
+    uint32_t binding = 0;
+	uint32_t item_count = 0;
 
-    VkDescriptorSet set;
+	uint32_t size() {
+		return uint32_t(item_count * sizeof(T));
+	}
 
-    constexpr static const size_t item_count = N;
-    constexpr static const size_t size = item_count * sizeof(T);
+	constexpr static const size_t max_size = 256 * sizeof(T);
+
+	void release(VkDevice device) {
+		vkFreeMemory(device, memory, nullptr);
+		vkDestroyBuffer(device, buffer, nullptr);
+	}
 
     void update(VkDevice device)
     {
@@ -35,48 +48,83 @@ struct buffer_t
 
         writeDescriptorSet.dstBinding = binding;
 
-        VkDescriptorBufferInfo bufferInfo { buffer, 0, size };
+        VkDescriptorBufferInfo bufferInfo { buffer, 0, max_size };
 
         writeDescriptorSet.pBufferInfo = &bufferInfo;
 
         vkUpdateDescriptorSets(device, 1, &writeDescriptorSet, 0, nullptr);
     }
 
-    std::array<T, item_count> read(VkDevice device)
+    std::vector<T> read(VkDevice device)
     {
         void* mapped;
-        if (vkMapMemory(device, memory, 0, size, 0, &mapped) != VK_SUCCESS)
+        if (vkMapMemory(device, memory, 0, size(), 0, &mapped) != VK_SUCCESS)
             return {};
 
         VkMappedMemoryRange mappedRange{};
         mappedRange.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
         mappedRange.memory = memory;
         mappedRange.offset = 0;
-        mappedRange.size = size;
+        mappedRange.size = VK_WHOLE_SIZE;
         if (vkInvalidateMappedMemoryRanges(device, 1, &mappedRange) != VK_SUCCESS)
             throw std::runtime_error("Failed to invalidate memory");
 
-        std::array<T, item_count> data;
-        memcpy(data.data(), mapped, size);
+        std::vector<T> data(item_count);
+        memcpy(data.data(), mapped, size());
 
         vkUnmapMemory(device, memory);
         return data;
     }
 
-    void write(VkDevice device, std::array<T, item_count> data)
+	std::vector<T> swap(VkDevice device, std::vector<T> newData) {
+		if (newData.size() * sizeof(T) > max_size)
+			throw std::runtime_error("batches too large");
+
+		void* mapped;
+		if (vkMapMemory(device, memory, 0, newData.size() * sizeof(T), 0, &mapped) != VK_SUCCESS)
+			return {};
+
+		VkMappedMemoryRange mappedRange{};
+		mappedRange.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+		mappedRange.memory = memory;
+		mappedRange.offset = 0;
+		mappedRange.size = VK_WHOLE_SIZE;
+		if (vkInvalidateMappedMemoryRanges(device, 1, &mappedRange) != VK_SUCCESS)
+			throw std::runtime_error("Failed to invalidate memory");
+
+		std::vector<T> oldData(item_count);
+		memcpy(oldData.data(), mapped, size());
+
+		memcpy(mapped, newData.data(), newData.size() * sizeof(T));
+		item_count = (uint32_t)newData.size();
+
+		// Flush writes to the device
+		mappedRange.size = VK_WHOLE_SIZE;
+		if (vkFlushMappedMemoryRanges(device, 1, &mappedRange) != VK_SUCCESS)
+			throw std::runtime_error("Failed to flush memory");
+
+		vkUnmapMemory(device, memory);
+		return oldData;
+	}
+
+    void write(VkDevice device, std::vector<T> data)
     {
+		if (data.size() * sizeof(T) > max_size)
+			throw std::runtime_error("batches too large");
+
         void* mapped;
-        if (vkMapMemory(device, memory, 0, size, 0, &mapped) != VK_SUCCESS)
+        if (vkMapMemory(device, memory, 0, data.size() * sizeof(T), 0, &mapped) != VK_SUCCESS)
             return;
 
-        memcpy(mapped, data.data(), size);
+        memcpy(mapped, data.data(), data.size() * sizeof(T));
+		item_count = (uint32_t)data.size();
 
         // Flush writes to the device
         VkMappedMemoryRange mappedRange{};
         mappedRange.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
         mappedRange.memory = memory;
         mappedRange.offset = 0;
-        mappedRange.size = data.size();
+        mappedRange.size = VK_WHOLE_SIZE;
         if (vkFlushMappedMemoryRanges(device, 1, &mappedRange) != VK_SUCCESS)
             throw std::runtime_error("Failed to flush memory");
 

@@ -8,10 +8,11 @@
 //   Finally, output is written to HASH[gl_GlobalInvocationID.x].
 // And the work group is done.
 
-layout (local_size_x = 64) in;
+layout (local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 struct input_words {
 	uint char_count; // Number of bytes in the string
+	uint hash;
 	uint words[32 * 3]; // Maximum size: 32 * 3 * 32 = 3072 B.
 };
 
@@ -21,6 +22,9 @@ layout (std430, binding = 0) buffer _input_words {
 
 void main()
 {
+	if (INPUT[gl_GlobalInvocationID.x].char_count == 0)
+		return;
+
 	uvec3 state;
 	state.x = 0xDEADBEEFu + INPUT[gl_GlobalInvocationID.x].char_count;
 	state.y = state.x;
@@ -85,5 +89,5 @@ void main()
 	state.z ^= state.y;							  // c ^= b
 	state.z -= (state.y << 24) | (state.y >> 8);  // c -= rot(b, 24)
 
-	INPUT[gl_GlobalInvocationID.x].char_count = state.z;
+	INPUT[gl_GlobalInvocationID.x].hash = state.z;
 }

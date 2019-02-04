@@ -10,6 +10,7 @@
 
 #include "gpu_jenkins_hash.hpp"
 #include "renderdoc.hpp"
+#include "metrics.hpp"
 
 #include <vulkan/vulkan.h>
 
@@ -45,7 +46,13 @@ void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT
 
 void JenkinsGpuHash::run()
 {
-    initVulkan();
+	createBuffers();
+
+	createComputePipeline();
+	createCommandPool();
+	createSyncObjects();
+
+	createCommandBuffers();
 
     renderdoc::init();
 
@@ -53,60 +60,86 @@ void JenkinsGpuHash::run()
     cleanup();
 }
 
-void JenkinsGpuHash::initVulkan()
-{
-    createInstance();
-    setupDebugMessenger();
-    pickPhysicalDevice();
-    createLogicalDevice();
-
-    createBuffers();
-
-    createComputePipeline();
-    createCommandPool();
-    createSyncObjects();
-
-    createCommandBuffers();
-}
-
 void JenkinsGpuHash::createBuffers()
 {
-    VkDeviceSize inputBufferSize = 64 * sizeof(uploaded_string);
-    VkDeviceSize outputBufferSize = 64 * sizeof(uint32_t);
-
-    for (uint32_t i = 0; i < _frameCount; ++i) {
+    for (Frame& frame : _frames) {
         // Staging buffer
         createBuffer(
             VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
-            &_frames[i].hostBuffer.buffer,
-            &_frames[i].hostBuffer.memory,
-            inputBufferSize);
+            &frame.hostBuffer.buffer,
+            &frame.hostBuffer.memory,
+			frame.hostBuffer.max_size);
 
         // Device buffer
         createBuffer(
             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, // VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-            &_frames[i].deviceBuffer.buffer,
-            &_frames[i].deviceBuffer.memory,
-            inputBufferSize);
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            &frame.deviceBuffer.buffer,
+            &frame.deviceBuffer.memory,
+			frame.deviceBuffer.max_size);
 
         // Input buffer on binding 0
-        _frames[i].deviceBuffer.binding = 0;
-
+		frame.deviceBuffer.binding = 0;
     }
+
+	createBuffer(
+		VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+		&dispatchBuffer.buffer,
+		&dispatchBuffer.memory,
+		sizeof(VkDispatchIndirectCommand));
+
+	std::vector<VkDispatchIndirectCommand> dispatch_args {
+		VkDispatchIndirectCommand {params.workgroupCount, 1, 1 }
+	};
+	dispatchBuffer.write(_device.device, dispatch_args);
 }
 
 void JenkinsGpuHash::mainLoop()
 {
-    while (true) {
-        std::array<uploaded_string, 64uLL> data;
-        uint32_t count = _dataProvider(&data);
-        if (count == 0)
-            break;
+	auto provide_data = [this](uint32_t& count, std::vector<uploaded_string>* data) -> void {
+		count = this->_dataProvider(data);
+	};
+	try {
+		metrics::start();
 
-        submitWork(data);
-    }
+		// First iteration of each frame
+		uint32_t count;
+		std::vector<uploaded_string> data(params.workgroupCount * 64uLL);
+		for (Frame& frame : _frames) {
+
+			provide_data(count, &data);
+
+			submitWork(data, count, true);
+		}
+
+		while (true) {
+			provide_data(count, &data);
+			if (count == 0) {
+				break;
+			}
+
+			submitWork(data, count);
+		}
+
+		// We may have left the loop because we got no data to send,
+		// but there is still some data left in the pipe
+		// We thus must iterate a third time, but just collect data
+		for (Frame& frame : _frames) {
+			vkWaitForFences(_device.device, 1, &frame.flightFence, VK_TRUE, UINT64_MAX);
+
+			auto frameOutput = frame.hostBuffer.read(_device.device);
+			if (frameOutput.size() == 0)
+				continue;
+			_outputHandler(&frameOutput, frame.hostBuffer.item_count);
+		}
+
+		metrics::stop();
+	}
+	catch (std::exception const& e) {
+		std::cerr << e.what() << std::endl;
+	}
 
     vkDeviceWaitIdle(_device.device);
 }
@@ -178,7 +211,15 @@ VkShaderModule JenkinsGpuHash::createShaderModule(const std::vector<char>& code)
 
 void JenkinsGpuHash::cleanup()
 {
+	for (Frame& frame : _frames)
+		frame.clear(_device.device);
+
+	dispatchBuffer.release(_device.device);
+
     vkDestroyCommandPool(_device.device, _commandPool, nullptr);
+
+	vkDestroyDescriptorSetLayout(_device.device, _descriptor.setLayout, nullptr);
+	vkDestroyDescriptorPool(_device.device, _descriptor.pool, nullptr);
 
     vkDestroyPipeline(_device.device, _pipeline.pipeline, nullptr);
     vkDestroyPipelineLayout(_device.device, _pipeline.layout, nullptr);
@@ -237,9 +278,8 @@ void JenkinsGpuHash::pickPhysicalDevice()
     uint32_t deviceCount = 0;
     vkEnumeratePhysicalDevices(_instance, &deviceCount, nullptr);
 
-    if (deviceCount == 0) {
+    if (deviceCount == 0)
         throw std::runtime_error("failed to find GPUs with Vulkan support!");
-    }
 
     std::vector<VkPhysicalDevice> devices(deviceCount);
     vkEnumeratePhysicalDevices(_instance, &deviceCount, devices.data());
@@ -306,14 +346,14 @@ void JenkinsGpuHash::createLogicalDevice()
 void JenkinsGpuHash::createComputePipeline()
 {
     std::vector<VkDescriptorPoolSize> poolSizes = {
-        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, _frameCount },
+        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, (uint32_t)_frames.size() },
     };
 
     VkDescriptorPoolCreateInfo descriptorPoolInfo{};
     descriptorPoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     descriptorPoolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     descriptorPoolInfo.pPoolSizes = poolSizes.data();
-    descriptorPoolInfo.maxSets = _frameCount;
+    descriptorPoolInfo.maxSets = (uint32_t)_frames.size();
     if (vkCreateDescriptorPool(_device.device, &descriptorPoolInfo, nullptr, &_descriptor.pool) != VK_SUCCESS)
         throw std::runtime_error("failed to create descriptor pool");
 
@@ -325,7 +365,7 @@ void JenkinsGpuHash::createComputePipeline()
     // Create the descriptor set layout.
     VkDescriptorSetLayoutCreateInfo descriptorLayout{};
     descriptorLayout.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    descriptorLayout.bindingCount = setLayoutBindings.size();
+    descriptorLayout.bindingCount = (uint32_t)setLayoutBindings.size();
     descriptorLayout.pBindings = setLayoutBindings.data();
     if (vkCreateDescriptorSetLayout(_device.device, &descriptorLayout, nullptr, &_descriptor.setLayout) != VK_SUCCESS)
         throw std::runtime_error("failed to create descriptor set layout!");
@@ -342,7 +382,7 @@ void JenkinsGpuHash::createComputePipeline()
 
     // Allocate descriptor sets.
 
-    for (uint32_t i = 0; i < _frames.size(); ++i)
+    for (size_t i = 0; i < _frames.size(); ++i)
     {
         VkDescriptorSetAllocateInfo allocInfo{};
         allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -352,8 +392,6 @@ void JenkinsGpuHash::createComputePipeline()
         if (vkAllocateDescriptorSets(_device.device, &allocInfo, &_frames[i].deviceBuffer.set) != VK_SUCCESS)
             throw std::runtime_error("failed to create descriptor set!");
     }
-
-    _frames[0].deviceBuffer.update(_device.device);
 
     auto computeShaderCode = readFile("shaders/comp.spv");
     VkShaderModule computeShaderModule = createShaderModule(computeShaderCode);
@@ -386,46 +424,45 @@ void JenkinsGpuHash::createCommandPool()
     poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     poolInfo.queueFamilyIndex = queueFamilyIndices.computeFamily.value();
 
-    if (vkCreateCommandPool(_device.device, &poolInfo, nullptr, &_commandPool) != VK_SUCCESS) {
+    if (vkCreateCommandPool(_device.device, &poolInfo, nullptr, &_commandPool) != VK_SUCCESS)
         throw std::runtime_error("failed to create command pool!");
-    }
 }
 
 void JenkinsGpuHash::createCommandBuffers()
 {
-    for (size_t i = 0; i < _frames.size(); i++) {
+    for (Frame& frame : _frames) {
         VkCommandBufferAllocateInfo allocInfo {};
         allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
         allocInfo.commandPool = _commandPool;
         allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         allocInfo.commandBufferCount = 1;
-        vkAllocateCommandBuffers(_device.device, &allocInfo, &_frames[i].commandBuffer);
+        vkAllocateCommandBuffers(_device.device, &allocInfo, &frame.commandBuffer);
 
         VkCommandBufferBeginInfo beginInfo {};
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
 
-        if (vkBeginCommandBuffer(_frames[i].commandBuffer, &beginInfo) != VK_SUCCESS)
+        if (vkBeginCommandBuffer(frame.commandBuffer, &beginInfo) != VK_SUCCESS)
             throw std::runtime_error("failed to begin recording command buffer!");
 
-        _frames[i].deviceBuffer.update(_device.device);
+        frame.deviceBuffer.update(_device.device);
 
         VkBufferCopy copyRegion{};
-        copyRegion.size = 64uLL * sizeof(uploaded_string);
+        copyRegion.size = frame.hostBuffer.max_size;
         copyRegion.dstOffset = 0;
         copyRegion.srcOffset = 0;
-        vkCmdCopyBuffer(_frames[i].commandBuffer, _frames[i].hostBuffer.buffer, _frames[i].deviceBuffer.buffer, 1, &copyRegion);
+        vkCmdCopyBuffer(frame.commandBuffer, frame.hostBuffer.buffer, frame.deviceBuffer.buffer, 1, &copyRegion);
 
         // Barrier for cmdCopyBuffer above
         VkBufferMemoryBarrier bufferBarrier{};
         bufferBarrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-        bufferBarrier.buffer = _frames[i].deviceBuffer.buffer;
-        bufferBarrier.size = copyRegion.size;
+        bufferBarrier.buffer = frame.deviceBuffer.buffer;
+        bufferBarrier.size = VK_WHOLE_SIZE;
         bufferBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         bufferBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
         bufferBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         bufferBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        vkCmdPipelineBarrier(_frames[i].commandBuffer,
+        vkCmdPipelineBarrier(frame.commandBuffer,
             VK_PIPELINE_STAGE_TRANSFER_BIT,
             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
             0,
@@ -433,31 +470,28 @@ void JenkinsGpuHash::createCommandBuffers()
             1, &bufferBarrier,
             0, nullptr);
 
-        vkCmdBindPipeline(_frames[i].commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, _pipeline.pipeline);
-        uint32_t dynamicOffset = sizeof(uploaded_string) * _currentFrame;
-        vkCmdBindDescriptorSets(_frames[i].commandBuffer,
+        vkCmdBindPipeline(frame.commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, _pipeline.pipeline);
+        vkCmdBindDescriptorSets(frame.commandBuffer,
             VK_PIPELINE_BIND_POINT_COMPUTE,
             _pipeline.layout,
             0,
             1,
-            &_frames[i].deviceBuffer.set,
+            &frame.deviceBuffer.set,
             0,
             nullptr);
-        vkCmdDispatch(_frames[i].commandBuffer,
-            64, //_device.properties.limits.maxComputeWorkGroupCount[0],
-            1,
-            1);
+
+		vkCmdDispatchIndirect(frame.commandBuffer, dispatchBuffer.buffer, 0);
 
         // Barrier to ensure that shader writes are finished before buffer is read back from GPU
         bufferBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
         bufferBarrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-        bufferBarrier.buffer = _frames[i].deviceBuffer.buffer;
-        bufferBarrier.size = copyRegion.size;
+        bufferBarrier.buffer = frame.deviceBuffer.buffer;
+        bufferBarrier.size = VK_WHOLE_SIZE;
         bufferBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         bufferBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 
         vkCmdPipelineBarrier(
-            _frames[i].commandBuffer,
+            frame.commandBuffer,
             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
             VK_PIPELINE_STAGE_TRANSFER_BIT,
             0,
@@ -465,18 +499,18 @@ void JenkinsGpuHash::createCommandBuffers()
             1, &bufferBarrier,
             0, nullptr);
 
-        vkCmdCopyBuffer(_frames[i].commandBuffer, _frames[i].deviceBuffer.buffer, _frames[i].hostBuffer.buffer, 1, &copyRegion);
+        vkCmdCopyBuffer(frame.commandBuffer, frame.deviceBuffer.buffer, frame.hostBuffer.buffer, 1, &copyRegion);
 
         // Barrier to ensure that buffer copy is finished before host reading from it
         bufferBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         bufferBarrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
-        bufferBarrier.buffer = _frames[i].hostBuffer.buffer;
-        bufferBarrier.size = copyRegion.size;
+        bufferBarrier.buffer = frame.hostBuffer.buffer;
+        bufferBarrier.size = VK_WHOLE_SIZE;
         bufferBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         bufferBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 
         vkCmdPipelineBarrier(
-            _frames[i].commandBuffer,
+            frame.commandBuffer,
             VK_PIPELINE_STAGE_TRANSFER_BIT,
             VK_PIPELINE_STAGE_HOST_BIT,
             0,
@@ -484,36 +518,30 @@ void JenkinsGpuHash::createCommandBuffers()
             1, &bufferBarrier,
             0, nullptr);
 
-        if (vkEndCommandBuffer(_frames[i].commandBuffer) != VK_SUCCESS)
+        if (vkEndCommandBuffer(frame.commandBuffer) != VK_SUCCESS)
             throw std::runtime_error("failed to record command buffer!");
     }
 }
 
-bool JenkinsGpuHash::submitWork(std::array<uploaded_string, 64uLL> inputData)
+bool JenkinsGpuHash::submitWork(std::vector<uploaded_string> const& inputData, uint64_t count, bool first)
 {
     renderdoc::begin_frame();
 
-    vkWaitForFences(_device.device, 1, &_frames[_currentFrame].flightFence, VK_TRUE, UINT64_MAX);
+	vkWaitForFences(_device.device, 1, &_frames[_currentFrame].flightFence, VK_TRUE, UINT64_MAX);
     vkResetFences(_device.device, 1, &_frames[_currentFrame].flightFence);
-
-    // TODO: BUG 1: Buffer copies from the device to the host does not seem to work
-    auto previousOutputData = _frames[_currentFrame].hostBuffer.read(_device.device);
-    _frames[_currentFrame].hostBuffer.write(_device.device, inputData);
+	
+	if (!first) {
+		auto previousOutputData = _frames[_currentFrame].hostBuffer.swap(_device.device, inputData);
+		_outputHandler(&previousOutputData, previousOutputData.size());
+	} else {
+		_frames[_currentFrame].hostBuffer.write(_device.device, inputData);
+	}
 
     VkSubmitInfo submitInfo {};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-
-    submitInfo.waitSemaphoreCount = 0;
-    submitInfo.pWaitSemaphores = nullptr;
-    submitInfo.pWaitDstStageMask = nullptr;
-
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &_frames[_currentFrame].commandBuffer;
 
-    submitInfo.signalSemaphoreCount = 0;
-    submitInfo.pSignalSemaphores = nullptr;
-
-    // TODO: BUG 2: vkQueueSubmit returns VK_ERROR_DEVICE_LOST the second time a given frame executes.
     VkResult result = vkQueueSubmit(_computeQueue, 1, &submitInfo, _frames[_currentFrame].flightFence);
     if (result != VK_SUCCESS)
         throw std::runtime_error(std::string{ "failed to submit command buffer! Frame #" } + std::to_string(_currentFrame));
@@ -523,9 +551,11 @@ bool JenkinsGpuHash::submitWork(std::array<uploaded_string, 64uLL> inputData)
     renderdoc::end_frame();
 
     _currentFrame = (_currentFrame + 1);
-    if (_currentFrame == _frameCount)
+    if (_currentFrame == _frames.size())
         _currentFrame = 0;
 
+	// We don't really care WHEN stuff is done, we just keep track of HOW MANY are done
+	metrics::increment(count);
     return true;
 }
 

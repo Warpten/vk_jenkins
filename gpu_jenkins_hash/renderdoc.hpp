@@ -1,7 +1,5 @@
 #pragma once
 
-#define RENDERDOC
-
 namespace renderdoc
 {
     void init();
