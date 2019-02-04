@@ -11,37 +11,37 @@
 
 struct options_t {
 private:
-	std::vector<char*> _vals;
+    std::vector<char*> _vals;
 
 public:
-	options_t(char** s, char** e) : _vals(s, e) {
+    options_t(char** s, char** e) : _vals(s, e) {
 
-	}
+    }
 
 public:
-	uint32_t get(std::string const& key, uint32_t def) {
-		auto idx = std::find(_vals.begin(), _vals.end(), key);
-		if (idx == _vals.end())
-			return def;
+    uint32_t get(std::string const& key, uint32_t def) {
+        auto idx = std::find(_vals.begin(), _vals.end(), key);
+        if (idx == _vals.end())
+            return def;
 
-		return std::atoi(*(++idx));
-	}
+        return std::atoi(*(++idx));
+    }
 
     bool has(std::string const& key) {
         return std::find(_vals.begin(), _vals.end(), key) != _vals.end();
     }
 
-	std::string getString(std::string const& key) {
-		auto idx = std::find(_vals.begin(), _vals.end(), key);
-		if (idx == _vals.end())
+    std::string getString(std::string const& key) {
+        auto idx = std::find(_vals.begin(), _vals.end(), key);
+        if (idx == _vals.end())
             return "";
 
-		return *(++idx);
-	}
+        return *(++idx);
+    }
 };
 
 int main(int argc, char* argv[]) {
-	options_t options(argv, argv + argc);
+    options_t options(argv, argv + argc);
 
     if (options.has("--help") || !options.has("--input")) {
         std::cout << "Arguments:" << std::endl;
@@ -59,8 +59,8 @@ int main(int argc, char* argv[]) {
 
     input_file input(options.getString("--input").c_str());
 
-	// --frames denotes the amount of frames of data pushed to the GPU
-	// while it is already calculating. This is similar to triple buffering in graphics.
+    // --frames denotes the amount of frames of data pushed to the GPU
+    // while it is already calculating. This is similar to triple buffering in graphics.
     JenkinsGpuHash app(options.get("--frames", 3));
 
     // The number of workgroups.
@@ -107,7 +107,7 @@ int main(int argc, char* argv[]) {
     std::cout << std::endl;
 
     std::cout << "Hardware limits applied to user-defined configuration..." << std::endl;
-	std::cout << "Workgroup count: " << app.getParams().workgroupCount << std::endl;
+    std::cout << "Workgroup count: " << app.getParams().workgroupCount << std::endl;
     std::cout << "Workgroup size: " << app.getParams().workgroupSize << std::endl;
 
     size_t inputIndex = 0;
@@ -123,18 +123,18 @@ int main(int argc, char* argv[]) {
             memcpy(element.words, item.data(), item.size());
         }
 
-		data->resize(i);
+        data->resize(i);
     });
 
     std::vector<uploaded_string> output;
-	app.setOutputHandler([&output](std::vector<uploaded_string>* data) -> void {
-		// No-op for the first call of each frame
+    app.setOutputHandler([&output](std::vector<uploaded_string>* data) -> void {
+        // No-op for the first call of each frame
         if (data->size() == 0)
             return;
 
         output.insert(output.end(), data->begin(), data->end());
-		data->resize(0);
-	});
+        data->resize(0);
+    });
 
     try {
         app.run();
@@ -144,22 +144,22 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
     }
 
-	std::set<uint32_t> map;
-	/*for (uploaded_string const& str : output) {
+    std::set<uint32_t> map;
+    /*for (uploaded_string const& str : output) {
 
-		///if (map.find(str.hash) != map.end())
-		///	throw std::runtime_error(str.value() + ": duplicate values returned by hasher!");
+        ///if (map.find(str.hash) != map.end())
+        ///    throw std::runtime_error(str.value() + ": duplicate values returned by hasher!");
 
-		map.insert(str.hash);
-		// std::cout << "0x" << std::setfill('0') << std::setw(8) << std::hex << str.hash << " = '" << str.value() << "';\n";
-	}*/
+        map.insert(str.hash);
+        // std::cout << "0x" << std::setfill('0') << std::setw(8) << std::hex << str.hash << " = '" << str.value() << "';\n";
+    }*/
 
-	std::cout << "Hash rate: "
-		<< metrics::hashes_per_second() << " hashes per second ("
-		<< std::dec << metrics::total() << " hashes expected, "
-		<< output.size() << " total, "
-		<< metrics::elapsed_time().c_str() << " s)" << std::endl;
-	std::cout << "Done! Press a key to exit" << std::endl;
+    std::cout << "Hash rate: "
+        << metrics::hashes_per_second() << " hashes per second ("
+        << std::dec << metrics::total() << " hashes expected, "
+        << output.size() << " total, "
+        << metrics::elapsed_time().c_str() << " s)" << std::endl;
+    std::cout << "Done! Press a key to exit" << std::endl;
 
     std::cin.get();
 

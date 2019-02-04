@@ -47,12 +47,12 @@ void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT
 void JenkinsGpuHash::run()
 {
     createCommandPool();
-	createBuffers();
+    createBuffers();
 
-	createComputePipeline();
-	createSyncObjects();
+    createComputePipeline();
+    createSyncObjects();
 
-	createCommandBuffers();
+    createCommandBuffers();
 
     renderdoc::init();
 
@@ -97,53 +97,65 @@ void JenkinsGpuHash::createBuffers()
 
 void JenkinsGpuHash::mainLoop()
 {
-	auto provide_data = [this](std::vector<uploaded_string>* data) -> void {
-		this->_dataProvider(data);
-	};
-	try {
-		metrics::start();
+    auto provide_data = [this](std::vector<uploaded_string>* data) -> void {
+        this->_dataProvider(data);
+    };
+    try {
+        metrics::start();
 
-		// First iteration of each frame
-		std::vector<uploaded_string> data(params.workgroupCount * params.workgroupSize);
-		for (Frame& frame : _frames) {
-			provide_data(&data);
+        VkResult result;
+
+        // First iteration of each frame
+        std::vector<uploaded_string> data(params.workgroupCount * params.workgroupSize);
+        for (Frame& frame : _frames) {
+            provide_data(&data);
             if (data.size() == 0)
                 break;
 
-			submitWork(data, true);
-		}
+            result = submitWork(data, true);
+            if (result != VK_SUCCESS)
+                goto error_handling;
+        }
 
         _currentFrame = 0;
 
-		while (true) {
-			provide_data(&data);
-			if (data.size() == 0)
-				break;
+        while (true) {
+            provide_data(&data);
+            if (data.size() == 0)
+                break;
 
-			submitWork(data);
-		}
+            result = submitWork(data);
+            if (result != VK_SUCCESS)
+                goto error_handling;
+        }
 
-		// We may have left the loop because we got no data to send,
-		// but there is still some data left in the pipe
-		// We thus must iterate a third time, but just collect data
+        // We may have left the loop because we got no data to send,
+        // but there is still some data left in the pipe
+        // We thus must iterate a third time, but just collect data
         for (uint32_t i = 0; i < _frames.size(); ++i) {
             Frame& frame = _frames[_currentFrame++];
 
-			vkWaitForFences(_device.device, 1, &frame.flightFence, VK_TRUE, UINT64_MAX);
+            vkWaitForFences(_device.device, 1, &frame.flightFence, VK_TRUE, UINT64_MAX);
 
-			auto frameOutput = frame.hostBuffer.read(_device.device);
-			if (frameOutput.size() > 0)
-			    _outputHandler(&frameOutput);
+            auto frameOutput = frame.hostBuffer.read(_device.device);
+            if (frameOutput.size() > 0)
+                _outputHandler(&frameOutput);
 
             if (_currentFrame == _frames.size())
                 _currentFrame = 0;
-		}
+        }
 
-		metrics::stop();
-	}
-	catch (std::exception const& e) {
-		std::cerr << e.what() << std::endl;
-	}
+        goto exit_normally;
+
+    error_handling:
+        throw std::runtime_error("vkQueueSubmit failed");
+    }
+    catch (std::exception const& e) {
+        std::cerr << e.what() << std::endl;
+    }
+
+exit_normally:
+    metrics::stop();
 
     vkDeviceWaitIdle(_device.device);
 }
@@ -215,15 +227,15 @@ VkShaderModule JenkinsGpuHash::createShaderModule(const std::vector<char>& code)
 
 void JenkinsGpuHash::cleanup()
 {
-	for (Frame& frame : _frames)
-		frame.clear(_device.device);
+    for (Frame& frame : _frames)
+        frame.clear(_device.device);
 
-	dispatchBuffer.release(_device.device);
+    dispatchBuffer.release(_device.device);
 
     vkDestroyCommandPool(_device.device, _commandPool, nullptr);
 
-	vkDestroyDescriptorSetLayout(_device.device, _descriptor.setLayout, nullptr);
-	vkDestroyDescriptorPool(_device.device, _descriptor.pool, nullptr);
+    vkDestroyDescriptorSetLayout(_device.device, _descriptor.setLayout, nullptr);
+    vkDestroyDescriptorPool(_device.device, _descriptor.pool, nullptr);
 
     vkDestroyPipeline(_device.device, _pipeline.pipeline, nullptr);
     vkDestroyPipelineLayout(_device.device, _pipeline.layout, nullptr);
@@ -542,7 +554,7 @@ void JenkinsGpuHash::createCommandBuffers()
             0,
             nullptr);
 
-		vkCmdDispatchIndirect(frame.commandBuffer, dispatchBuffer.buffer, 0);
+        vkCmdDispatchIndirect(frame.commandBuffer, dispatchBuffer.buffer, 0);
 
         // Barrier to ensure that shader writes are finished before buffer is read back from GPU
         bufferBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
@@ -585,19 +597,19 @@ void JenkinsGpuHash::createCommandBuffers()
     }
 }
 
-bool JenkinsGpuHash::submitWork(std::vector<uploaded_string> const& inputData, bool first)
+VkResult JenkinsGpuHash::submitWork(std::vector<uploaded_string> const& inputData, bool first)
 {
     renderdoc::begin_frame();
 
-	vkWaitForFences(_device.device, 1, &_frames[_currentFrame].flightFence, VK_TRUE, UINT64_MAX);
+    vkWaitForFences(_device.device, 1, &_frames[_currentFrame].flightFence, VK_TRUE, UINT64_MAX);
     vkResetFences(_device.device, 1, &_frames[_currentFrame].flightFence);
 
-	if (!first) {
-		auto previousOutputData = _frames[_currentFrame].hostBuffer.swap(_device.device, inputData);
-		_outputHandler(&previousOutputData);
-	} else {
-		_frames[_currentFrame].hostBuffer.write(_device.device, inputData);
-	}
+    if (!first) {
+        auto previousOutputData = _frames[_currentFrame].hostBuffer.swap(_device.device, inputData);
+        _outputHandler(&previousOutputData);
+    } else {
+        _frames[_currentFrame].hostBuffer.write(_device.device, inputData);
+    }
 
     VkSubmitInfo submitInfo {};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -605,18 +617,18 @@ bool JenkinsGpuHash::submitWork(std::vector<uploaded_string> const& inputData, b
     submitInfo.pCommandBuffers = &_frames[_currentFrame].commandBuffer;
 
     VkResult result = vkQueueSubmit(_computeQueue, 1, &submitInfo, _frames[_currentFrame].flightFence);
-    if (result != VK_SUCCESS)
-        throw std::runtime_error(std::string{ "failed to submit command buffer! Frame #" } + std::to_string(_currentFrame));
 
     renderdoc::end_frame();
 
     _currentFrame = (_currentFrame + 1);
-    if (_currentFrame == _frames.size())
+    if (_currentFrame == _frames.size()) {
         _currentFrame = 0;
+        vkDeviceWaitIdle(_device.device);
+    }
 
-	// We don't really care WHEN stuff is done, we just keep track of HOW MANY are done
-	metrics::increment(inputData.size());
-    return true;
+    // We don't really care WHEN stuff is done, we just keep track of HOW MANY are done
+    metrics::increment(inputData.size());
+    return result;
 }
 
 bool JenkinsGpuHash::isDeviceSuitable(VkPhysicalDevice device)

@@ -13,7 +13,7 @@
 struct Device {
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
     VkDevice device = VK_NULL_HANDLE;
-	VkPhysicalDeviceProperties properties = { 0 };
+    VkPhysicalDeviceProperties properties = { 0 };
 };
 
 struct Descriptor {
@@ -38,47 +38,47 @@ struct QueueFamilyIndices {
 class JenkinsGpuHash {
 public:
     JenkinsGpuHash(uint32_t frameCount) {
-		_frames.resize(frameCount);
+        _frames.resize(frameCount);
 
-		createInstance();
-		setupDebugMessenger();
-		pickPhysicalDevice();
-		createLogicalDevice();
-	}
+        createInstance();
+        setupDebugMessenger();
+        pickPhysicalDevice();
+        createLogicalDevice();
+    }
 
     void run();
 
-	template <typename F>
-	inline void setDataProvider(F f) {
-		_dataProvider = std::function<void(std::vector<uploaded_string>*)>(std::move(f));
-	}
+    template <typename F>
+    inline void setDataProvider(F f) {
+        _dataProvider = std::function<void(std::vector<uploaded_string>*)>(std::move(f));
+    }
 
-	template <typename F>
-	inline void setOutputHandler(F f) {
-		_outputHandler = std::function<void(std::vector<uploaded_string>*)>(std::move(f));
-	}
+    template <typename F>
+    inline void setOutputHandler(F f) {
+        _outputHandler = std::function<void(std::vector<uploaded_string>*)>(std::move(f));
+    }
 
-	struct params_t {
-		uint32_t workgroupCount = 0;
+    struct params_t {
+        uint32_t workgroupCount = 0;
         uint32_t workgroupSize = 64;
-	};
+    };
 
-	void setWorkgroupCount(uint32_t size) {
-		params.workgroupCount = std::min(_device.properties.limits.maxComputeWorkGroupCount[0], size);
-	}
+    void setWorkgroupCount(uint32_t size) {
+        params.workgroupCount = std::min(_device.properties.limits.maxComputeWorkGroupCount[0], size);
+    }
 
     void setWorkgroupSize(uint32_t size) {
         params.workgroupSize = std::min(_device.properties.limits.maxComputeWorkGroupSize[0], size);
     }
 
-	params_t const& getParams() { return params; }
+    params_t const& getParams() { return params; }
 
 private:
 
-	params_t params;
+    params_t params;
 
     std::function<void(std::vector<uploaded_string>*)> _dataProvider;
-	std::function<void(std::vector<uploaded_string>*)> _outputHandler;
+    std::function<void(std::vector<uploaded_string>*)> _outputHandler;
 
     VkInstance _instance;
     VkDebugUtilsMessengerEXT _debugMessenger;
@@ -105,15 +105,15 @@ private:
 
         VkFence flightFence = VK_NULL_HANDLE;
 
-		void clear(VkDevice device) {
-			vkDestroyFence(device, flightFence, nullptr);
-			vkDestroySemaphore(device, semaphore, nullptr);
+        void clear(VkDevice device) {
+            vkDestroyFence(device, flightFence, nullptr);
+            vkDestroySemaphore(device, semaphore, nullptr);
 
-			deviceBuffer.release(device);
-			hostBuffer.release(device);
-		}
+            deviceBuffer.release(device);
+            hostBuffer.release(device);
+        }
     };
-	buffer_t<VkDispatchIndirectCommand> dispatchBuffer;
+    buffer_t<VkDispatchIndirectCommand> dispatchBuffer;
 
     std::vector<Frame> _frames;
 
@@ -135,7 +135,7 @@ private:
 
     void createCommandBuffers();
 
-    bool submitWork(std::vector<uploaded_string> const& data, bool first = false);
+    VkResult submitWork(std::vector<uploaded_string> const& data, bool first = false);
 
     void createBuffers();
 
@@ -156,9 +156,9 @@ private:
     void createSyncObjects();
 
 public:
-	VkPhysicalDeviceProperties const& getDeviceProperties() {
-		return _device.properties;
-	}
+    VkPhysicalDeviceProperties const& getDeviceProperties() {
+        return _device.properties;
+    }
 };
 
 
