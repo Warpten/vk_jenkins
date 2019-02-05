@@ -43,18 +43,28 @@ public:
 };
 
 int main(int argc, char* argv[]) {
-    options_t options(argv, argv + argc);
+    options_t options(argv, argv + argc); //-V104
 
     if (options.has("--help") || !options.has("--input")) {
-        std::cout << "Arguments:" << std::endl;
-        std::cout << "--input             The path to the input file. Defaults to 'input.txt'\n";
-        std::cout << "--frames            This parameter is similar to buffering and allows the application\n"
+        std::cout
+			<< "Arguments:" << std::endl;
+        std::cout
+			<< "--input             The path to the input file. Defaults to 'input.txt'.\n\n";
+        std::cout
+			<< "--frames            This parameter is similar to buffering and allows the application\n"
             << "                    to enqueue work on the GPU without waiting for hash computations to finish.\n"
             << "                    The default value is 3.\n\n";
-        std::cout << "--workgroupCount    This parameter defines the number of workgroups that can be dispatched at once.\n"
+        std::cout
+			<< "--workgroupCount    This parameter defines the number of workgroups that can be dispatched at once.\n"
             << "                    The default value is 3.\n\n";
-        std::cout << "--workgroupSize     This parameter defines the amount of work each workgroup can process.\n"
+        std::cout
+			<< "--workgroupSize     This parameter defines the amount of work each workgroup can process.\n"
             << "                    The default value is 64, which is the bare minimum for any kind of performance benefit.\n\n";
+
+		if (!options.has("--input")) {
+			std::cout << "Press a key to exit" << std::endl;
+			std::cin.get();
+		}
 
         return EXIT_SUCCESS;
     }
@@ -79,32 +89,34 @@ int main(int argc, char* argv[]) {
         << VK_VERSION_MINOR(app.getDeviceProperties().driverVersion) << "."
         << VK_VERSION_PATCH(app.getDeviceProperties().driverVersion) << ")" << std::endl;
 
+	VkPhysicalDeviceLimits const& limits = app.getDeviceProperties().limits;
+
     // The maximum number of local workgroups that can be dispatched by a single dispatch command.
     // These three values represent the maximum number of local workgroups for the X, Y, and Z dimensions, respectively.
     // The workgroup count parameters to the dispatch commands must be less than or equal to the corresponding limit.
     std::cout << "    maxComputeWorkGroupCount: { "
-        << app.getDeviceProperties().limits.maxComputeWorkGroupCount[0] << ", "
-        << app.getDeviceProperties().limits.maxComputeWorkGroupCount[1] << ", "
-        << app.getDeviceProperties().limits.maxComputeWorkGroupCount[2] << " }" << std::endl;
+        << limits.maxComputeWorkGroupCount[0] << ", "
+        << limits.maxComputeWorkGroupCount[1] << ", "
+        << limits.maxComputeWorkGroupCount[2] << " }" << std::endl;
 
     // The maximum total number of compute shader invocations in a single local workgroup.
     // The product of the X, Y, and Z sizes as specified by the LocalSize execution mode in shader modules and by the
     // object decorated by the WorkgroupSize decoration must be less than or equal to this limit.
     std::cout << "    maxComputeWorkGroupSize: { "
-        << app.getDeviceProperties().limits.maxComputeWorkGroupSize[0] << ", "
-        << app.getDeviceProperties().limits.maxComputeWorkGroupSize[1] << ", "
-        << app.getDeviceProperties().limits.maxComputeWorkGroupSize[2] << " }" << std::endl;
+        << limits.maxComputeWorkGroupSize[0] << ", "
+        << limits.maxComputeWorkGroupSize[1] << ", "
+        << limits.maxComputeWorkGroupSize[2] << " }" << std::endl;
 
     // The maximum total number of compute shader invocations in a single local workgroup.
     // The product of the X, Y, and Z sizes as specified by the LocalSize execution mode in shader modules and by the object
     // decorated by the WorkgroupSize decoration must be less than or equal to this limit.
     std::cout << "    maxComputeWorkGroupInvocations: "
-        << app.getDeviceProperties().limits.maxComputeWorkGroupInvocations << std::endl;
+        << limits.maxComputeWorkGroupInvocations << std::endl;
 
     // Specifies support for timestamps on all graphics and compute queues.
     // If this limit is set to VK_TRUE, all queues that advertise the VK_QUEUE_GRAPHICS_BIT or VK_QUEUE_COMPUTE_BIT in the
     // VkQueueFamilyProperties::queueFlags support VkQueueFamilyProperties::timestampValidBits of at least 36.
-    std::cout << "    timestampComputeAndGraphics: " << (app.getDeviceProperties().limits.timestampComputeAndGraphics ? "yes" : "no") << std::endl;
+    std::cout << "    timestampComputeAndGraphics: " << (limits.timestampComputeAndGraphics ? "yes" : "no") << std::endl;
 
     std::cout << std::endl;
 
@@ -112,9 +124,7 @@ int main(int argc, char* argv[]) {
     std::cout << "Workgroup count: " << app.getParams().workgroupCount << std::endl;
     std::cout << "Workgroup size: " << app.getParams().workgroupSize << std::endl;
 
-    size_t inputIndex = 0;
-
-    app.setDataProvider([&input, &inputIndex](std::vector<uploaded_string>* data) -> void {
+    app.setDataProvider([&input](std::vector<uploaded_string>* data) -> void {
         size_t i = 0;
 
         for (; i < data->capacity() && input.hasNext(); ++i) {
@@ -130,7 +140,7 @@ int main(int argc, char* argv[]) {
         data->resize(i);
     });
 
-    std::vector<uploaded_string> output;
+	size_t output = 0;
     app.setOutputHandler([&output](std::vector<uploaded_string>* data) -> void {
         // No-op for the first call of each frame
         if (data->size() == 0)
@@ -144,7 +154,7 @@ int main(int argc, char* argv[]) {
                 std::cout << "Invalid hash for " << itr.value() << " (got " << std::hex << gpuHash << ", expected " << cpuHash << ")" << std::endl;
         }
 
-        //output.insert(output.end(), data->begin(), data->end());
+		output += data->size();
         data->resize(0);
     });
 
@@ -168,8 +178,8 @@ int main(int argc, char* argv[]) {
 
     std::cout << "Hash rate: "
         << std::dec << uint64_t(metrics::hashes_per_second()) << " hashes per second ("
-        << std::dec << metrics::total() << " hashes expected, "
-        << output.size() << " total, "
+        << metrics::total() << " hashes expected, "
+        << output << " total, "
         << metrics::elapsed_time().c_str() << " s)" << std::endl;
     std::cout << "Done! Press a key to exit" << std::endl;
 

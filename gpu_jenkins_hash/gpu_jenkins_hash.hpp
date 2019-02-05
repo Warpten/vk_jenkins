@@ -34,10 +34,9 @@ struct QueueFamilyIndices {
     }
 };
 
-
 class JenkinsGpuHash {
 public:
-    JenkinsGpuHash(uint32_t frameCount) {
+    JenkinsGpuHash(size_t frameCount) {
         _frames.resize(frameCount);
 
         createInstance();

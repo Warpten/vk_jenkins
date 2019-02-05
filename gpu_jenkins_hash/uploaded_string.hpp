@@ -11,7 +11,7 @@ struct uploaded_string {
     uint32_t words[32 * 3] = {0};
 
     std::string value() const {
-        return std::string(reinterpret_cast<const char*>(words), char_count);
+        return std::string(reinterpret_cast<const char*>(words), static_cast<size_t>(char_count)); //-V206
     }
 };
 #pragma pack(pop)
@@ -27,15 +27,16 @@ struct buffer_t
     void* mapped = nullptr;
 
     uint32_t binding = 0;
-    uint32_t item_count = 0;
-    uint32_t max_size = sizeof(T);
+
+    size_t item_count = 0;
+    size_t max_size = sizeof(T);
 
     void setMaximumElementCount(uint32_t workgroup_count, uint32_t workgroup_size) {
-        max_size = sizeof(T) * workgroup_size * workgroup_count;
+        max_size = sizeof(T) * size_t(workgroup_size) * size_t(workgroup_count);
     }
 
-    uint32_t size() {
-        return uint32_t(item_count * sizeof(T));
+    size_t size() {
+        return item_count * sizeof(T);
     }
 
     void release(VkDevice device) {
@@ -107,7 +108,7 @@ struct buffer_t
 
         memset(mapped, 0, max_size);
         memcpy(mapped, newData.data(), newData.size() * sizeof(T));
-        item_count = (uint32_t)newData.size();
+        item_count = newData.size();
 
         // Flush writes to the device
         mappedRange.size = VK_WHOLE_SIZE;
@@ -147,7 +148,7 @@ struct buffer_t
 
         memset(mapped, 0, max_size);
         memcpy(mapped, data.data(), data.size() * sizeof(T));
-        item_count = (uint32_t)data.size();
+        item_count = data.size();
 
         // Flush writes to the device
         VkMappedMemoryRange mappedRange{};

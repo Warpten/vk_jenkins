@@ -132,7 +132,7 @@ void JenkinsGpuHash::mainLoop()
         // We may have left the loop because we got no data to send,
         // but there is still some data left in the pipe
         // We thus must iterate a third time, but just collect data
-        for (uint32_t i = 0; i < _frames.size(); ++i) {
+        for (size_t i = 0; i < _frames.size(); ++i) {
             Frame& frame = _frames[_currentFrame++];
 
             vkWaitForFences(_device.device, 1, &frame.flightFence, VK_TRUE, UINT64_MAX);
@@ -210,7 +210,7 @@ VkShaderModule JenkinsGpuHash::createShaderModule(const std::vector<char>& code)
     VkShaderModuleCreateInfo createInfo {};
     createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
     createInfo.codeSize = code.size();
-    createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+    createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data()); //-V206
 
     VkShaderModule shaderModule;
     if (vkCreateShaderModule(_device.device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS)
@@ -411,7 +411,7 @@ void JenkinsGpuHash::createComputePipeline()
     };
 
     VkSpecializationInfo shaderSpecInfo{};
-    shaderSpecInfo.mapEntryCount = specMapEntries.size();
+    shaderSpecInfo.mapEntryCount = static_cast<uint32_t>(specMapEntries.size());
     shaderSpecInfo.pMapEntries = specMapEntries.data();
 
     std::vector<uint32_t> workgroupSizes { params.workgroupSize };
