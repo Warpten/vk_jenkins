@@ -54,6 +54,8 @@ private:
         std::set<char> alphabet;
 
         uint32_t apply(std::vector<char>& storage, uint32_t offset) {
+			
+			return 0;
         }
 
         void selectNextPermutation() override {
@@ -86,9 +88,7 @@ public:
         size_t patternStartItr = regex.find('[', 0);
         size_t patternEndItr = regex.find(']', patternStartItr + 1);
 
-        if (patternStartItr == 0)
-            head = tail = new replacement_range_t();
-        else
+        if (patternStartItr != 0)
             head = tail = new fixed_range_t(std::string(regex.substr(0, patternStartItr)));
 
         size_t currentReplacementPosition = patternStartItr;
@@ -96,6 +96,11 @@ public:
 
             if (patternStartItr != std::string::npos) {
                 patternEndItr = regex.find(']', patternStartItr + 1);
+
+				if (head == nullptr)
+					head = tail = new replacement_range_t();
+				else if (tail->next == nullptr)
+					tail = tail->next = new replacement_range_t();
 
                 auto rangesNames = regex.substr(patternStartItr + 1, patternEndItr - patternStartItr - 1);
 
@@ -144,11 +149,11 @@ public:
                 if (regex[patternEndItr + 1] == '{') { // x to y, or x
                     size_t comma_pos = regex.find(',', patternEndItr + 2);
                     if (comma_pos == std::string::npos) { // x
-                        tail->setCount(std::stoi(regex.substr(patternEndItr + 2, endCountDelim - patternEndItr - 2).data()));
+                        tail->setCount(std::stoi(std::string(regex.substr(patternEndItr + 2, endCountDelim - patternEndItr - 2))));
                     }
                     else { // x to y
-                        tail->setMinCount(std::stoi(regex.substr(patternEndItr + 2, comma_pos - patternEndItr - 2).data()));
-                        tail->setMaxCount(std::stoi(regex.substr(comma_pos + 1, endCountDelim - comma_pos - 1).data()));
+                        tail->setMinCount(std::stoi(std::string(regex.substr(patternEndItr + 2, comma_pos - patternEndItr - 2))));
+                        tail->setMaxCount(std::stoi(std::string(regex.substr(comma_pos + 1, endCountDelim - comma_pos - 1))));
                     }
                 }
                 else
@@ -159,13 +164,18 @@ public:
 
                 size_t oldStart = patternStartItr;
                 patternStartItr = regex.find('[', patternStartItr + 1);
-                if (patternStartItr != std::string::npos)
-                    currentReplacementPosition = patternStartItr - (endCountDelim - oldStart);
+
+				tail = tail->next = new fixed_range_t(std::string(regex.substr(endCountDelim + 1, patternStartItr - endCountDelim - 1)));
+
+				if (patternStartItr != std::string::npos) {
+					currentReplacementPosition = patternStartItr - (endCountDelim - oldStart);
+				}
             }
         }
     }
 
     ~pattern_t() {
+		//TODO: blowing up the stack here would be fun; wouldn't it?
         std::function<void(node_t*)> last_deleter;
         last_deleter = [&](node_t* node) -> void {
             if (node->next != nullptr) {
