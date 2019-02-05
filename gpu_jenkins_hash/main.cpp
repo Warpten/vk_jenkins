@@ -45,35 +45,38 @@ public:
 int main(int argc, char* argv[]) {
     options_t options(argv, argv + argc); //-V104
 
+    // --frames denotes the amount of frames of data pushed to the GPU
+    // while it is already calculating. This is similar to triple buffering in graphics.
+    JenkinsGpuHash app(options.get("--frames", 3));
+    VkPhysicalDeviceLimits const& limits = app.getDeviceProperties().limits;
+
     if (options.has("--help") || !options.has("--input")) {
         std::cout
-			<< "Arguments:" << std::endl;
+            << "Arguments:" << std::endl;
         std::cout
-			<< "--input             The path to the input file. Defaults to 'input.txt'.\n\n";
+            << "--input             The path to the input file. This parameter is mandatory.\n\n";
         std::cout
-			<< "--frames            This parameter is similar to buffering and allows the application\n"
+            << "--frames            This parameter is similar to buffering and allows the application\n"
             << "                    to enqueue work on the GPU without waiting for hash computations to finish.\n"
             << "                    The default value is 3.\n\n";
         std::cout
-			<< "--workgroupCount    This parameter defines the number of workgroups that can be dispatched at once.\n"
-            << "                    The default value is 3.\n\n";
+            << "--workgroupCount    This parameter defines the number of workgroups that can be dispatched at once.\n"
+            << "                    The default value is 3.\n\n"
+            << "                    This value should not exceed " << limits.maxComputeWorkGroupCount[0] << " on your system.\n\n";
         std::cout
-			<< "--workgroupSize     This parameter defines the amount of work each workgroup can process.\n"
-            << "                    The default value is 64, which is the bare minimum for any kind of performance benefit.\n\n";
+            << "--workgroupSize     This parameter defines the amount of work each workgroup can process.\n"
+            << "                    The default value is 64, which is the bare minimum for any kind of performance benefit.\n\n"
+            << "                    This value should not exceed " << std::min(limits.maxComputeWorkGroupSize[0], limits.maxComputeWorkGroupInvocations) << " on your system.\n\n";
 
-		if (!options.has("--input")) {
-			std::cout << "Press a key to exit" << std::endl;
-			std::cin.get();
-		}
+        if (!options.has("--input")) {
+            std::cout << "Press a key to exit" << std::endl;
+            std::cin.get();
+        }
 
         return EXIT_SUCCESS;
     }
 
     input_file input(options.getString("--input").c_str());
-
-    // --frames denotes the amount of frames of data pushed to the GPU
-    // while it is already calculating. This is similar to triple buffering in graphics.
-    JenkinsGpuHash app(options.get("--frames", 3));
 
     // The number of workgroups.
     app.setWorkgroupCount(options.get("--workgroupCount", 3));
@@ -89,7 +92,6 @@ int main(int argc, char* argv[]) {
         << VK_VERSION_MINOR(app.getDeviceProperties().driverVersion) << "."
         << VK_VERSION_PATCH(app.getDeviceProperties().driverVersion) << ")" << std::endl;
 
-	VkPhysicalDeviceLimits const& limits = app.getDeviceProperties().limits;
 
     // The maximum number of local workgroups that can be dispatched by a single dispatch command.
     // These three values represent the maximum number of local workgroups for the X, Y, and Z dimensions, respectively.
@@ -140,7 +142,7 @@ int main(int argc, char* argv[]) {
         data->resize(i);
     });
 
-	size_t output = 0;
+    size_t output = 0;
     app.setOutputHandler([&output](std::vector<uploaded_string>* data) -> void {
         // No-op for the first call of each frame
         if (data->size() == 0)
@@ -154,7 +156,7 @@ int main(int argc, char* argv[]) {
                 std::cout << "Invalid hash for " << itr.value() << " (got " << std::hex << gpuHash << ", expected " << cpuHash << ")" << std::endl;
         }
 
-		output += data->size();
+        output += data->size();
         data->resize(0);
     });
 
@@ -165,16 +167,6 @@ int main(int argc, char* argv[]) {
         std::cerr << e.what() << std::endl;
         return EXIT_FAILURE;
     }
-
-    std::set<uint32_t> map;
-    /*for (uploaded_string const& str : output) {
-
-        ///if (map.find(str.hash) != map.end())
-        ///    throw std::runtime_error(str.value() + ": duplicate values returned by hasher!");
-
-        map.insert(str.hash);
-        // std::cout << "0x" << std::setfill('0') << std::setw(8) << std::hex << str.hash << " = '" << str.value() << "';\n";
-    }*/
 
     std::cout << "Hash rate: "
         << std::dec << uint64_t(metrics::hashes_per_second()) << " hashes per second ("
