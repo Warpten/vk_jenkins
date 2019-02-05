@@ -107,6 +107,7 @@ void JenkinsGpuHash::mainLoop()
 
         // First iteration of each frame
         std::vector<uploaded_string> data(params.workgroupCount * params.workgroupSize);
+
         for (Frame& frame : _frames) {
             provide_data(&data);
             if (data.size() == 0)

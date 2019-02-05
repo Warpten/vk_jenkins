@@ -2,12 +2,14 @@
 #include <iostream>
 #include <vector>
 #include <iomanip>
+#include <string_view>
 #include <set>
 
 #include "gpu_jenkins_hash.hpp"
 #include "input_file.hpp"
 #include "uploaded_string.hpp"
 #include "metrics.hpp"
+#include "pattern.hpp"
 
 #include "lookup3.hpp"
 
@@ -21,7 +23,7 @@ public:
     }
 
 public:
-    uint32_t get(std::string const& key, uint32_t def) {
+    uint32_t get(std::string_view key, uint32_t def) {
         auto idx = std::find(_vals.begin(), _vals.end(), key);
         if (idx == _vals.end())
             return def;
@@ -29,11 +31,11 @@ public:
         return std::atoi(*(++idx));
     }
 
-    bool has(std::string const& key) {
+    bool has(std::string_view key) {
         return std::find(_vals.begin(), _vals.end(), key) != _vals.end();
     }
 
-    std::string getString(std::string const& key) {
+    std::string getString(std::string_view  key) {
         auto idx = std::find(_vals.begin(), _vals.end(), key);
         if (idx == _vals.end())
             return "";
@@ -43,6 +45,8 @@ public:
 };
 
 int main(int argc, char* argv[]) {
+    pattern_t pattern("[alpha|num]{1, 3}nterface/[a-z]{9}/logo_800.avi");
+
     options_t options(argv, argv + argc); //-V104
 
     // --frames denotes the amount of frames of data pushed to the GPU

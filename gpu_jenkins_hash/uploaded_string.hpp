@@ -2,16 +2,29 @@
 
 #include <cstdint>
 #include <string>
+#include <algorithm>
 #include <vulkan/vulkan.h>
 
 #pragma pack(push, 1)
 struct uploaded_string {
-    uint32_t char_count = 0;
-    uint32_t hash = 0;
-    uint32_t words[32 * 3] = {0};
+    int32_t char_count;
+    uint32_t hash;
+    uint32_t words[32 * 3];
 
     std::string value() const {
         return std::string(reinterpret_cast<const char*>(words), static_cast<size_t>(char_count)); //-V206
+    }
+
+    uploaded_string() {
+        memset(words, 0, sizeof(words));
+        char_count = 0;
+        hash = 0;
+    }
+
+    uploaded_string(char* in) {
+        char_count = int32_t(strlen(in));
+        memcpy(words, in, std::min(uint64_t(char_count), sizeof(words)));
+        hash = 0;
     }
 };
 #pragma pack(pop)
