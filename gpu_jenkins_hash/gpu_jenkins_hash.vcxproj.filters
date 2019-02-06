@@ -59,5 +59,8 @@
     <ClCompile Include="metrics.cpp">
       <Filter>Header Files</Filter>
     </ClCompile>
+    <ClCompile Include="pattern.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>

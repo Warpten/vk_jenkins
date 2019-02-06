@@ -45,7 +45,12 @@ public:
 };
 
 int main(int argc, char* argv[]) {
-    pattern_t pattern("[alpha|num]{1, 3}nterface/[a-z]{9}/logo_800.avi");
+    std::vector<uploaded_string> bucket(64);
+    pattern_t pattern("[a-c]{1, 2}nterface/[0-9]/bah.mp3");
+    pattern.collect(bucket);
+
+    for (auto&& itr : bucket)
+        std::cout << "Generated " << itr.value() << std::endl;
 
     options_t options(argv, argv + argc); //-V104
 

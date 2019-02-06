@@ -167,6 +167,7 @@
     <ClInclude Include="input_file.hpp" />
     <ClInclude Include="lookup3.hpp" />
     <ClInclude Include="metrics.hpp" />
+    <ClInclude Include="pattern.hpp" />
     <ClInclude Include="renderdoc.hpp" />
     <ClInclude Include="targetver.h" />
     <ClInclude Include="uploaded_string.hpp" />
@@ -177,6 +178,7 @@
     <ClCompile Include="lookup3.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="metrics.cpp" />
+    <ClCompile Include="pattern.cpp" />
     <ClCompile Include="renderdoc.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

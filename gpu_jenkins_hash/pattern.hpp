@@ -10,169 +10,100 @@
 #include <set>
 #include <string_view>
 #include <cctype>
+#include <functional>
+
+struct node_t {
+    virtual ~node_t() { }
+
+    virtual uint32_t apply(std::vector<char>& storage, uint32_t offset) = 0;
+    virtual std::string_view parse(std::string_view view) = 0;
+
+    virtual void reset() = 0;
+    virtual bool has_next() = 0;
+    virtual void move_next() = 0;
+
+    node_t* next = nullptr;
+};
+
+// raw characters
+struct raw_range_t final : public node_t {
+    virtual ~raw_range_t() { }
+
+private:
+    std::string characters;
+
+public:
+    uint32_t apply(std::vector<char>& storage, uint32_t offset) override;
+    std::string_view parse(std::string_view view) override;
+
+    void reset() override { }
+    bool has_next() override { return false; }
+    virtual void move_next() override { }
+};
+
+// size modifier {x, y} {x}
+struct size_specified_range_t : public node_t {
+    virtual ~size_specified_range_t() { }
+
+protected:
+    uint32_t min_count;
+    uint32_t max_count;
+
+public:
+    virtual uint32_t apply(std::vector<char>& storage, uint32_t offset) = 0;
+    std::string_view parse(std::string_view view) override;
+
+    virtual void reset() = 0;
+    virtual bool has_next() = 0;
+    virtual void move_next() = 0;
+};
+
+// array (x|y|z)
+struct array_range_t final : public size_specified_range_t {
+    virtual ~array_range_t() { }
+
+private:
+    std::vector<std::string> values;
+    decltype(values)::const_iterator itr;
+
+public:
+    uint32_t apply(std::vector<char>& storage, uint32_t offset) override;
+    std::string_view parse(std::string_view view) override;
+
+    void reset() override;
+    bool has_next() override;
+    void move_next() override;
+};
+
+// ranges [a-z|alpha|alnum|num|hex|path]
+struct varying_range_t : public size_specified_range_t {
+    virtual ~varying_range_t() { }
+
+private:
+    std::set<char> universe;
+
+    std::vector<std::string> values;
+    decltype(values)::const_iterator itr;
+
+public:
+    uint32_t apply(std::vector<char>& storage, uint32_t offset) override;
+    std::string_view parse(std::string_view view) override;
+    void reset() override;
+    bool has_next() override;
+    void move_next() override;
+
+private:
+    void generate_perms();
+    std::vector<std::string> generate_perms(uint32_t minCount, uint32_t maxCount);
+};
 
 struct pattern_t {
 private:
-    struct node_t {
-        node_t* next = nullptr;
-
-        virtual uint32_t apply(std::vector<char>& storage, uint32_t offset) = 0;
-        virtual void selectNextPermutation() = 0;
-        virtual void addAlphabet(const char* first, const char* last) = 0;
-        virtual void addAlphabet(const char c) = 0;
-
-        virtual void setCount(uint32_t) = 0;
-        virtual void setMinCount(uint32_t) = 0;
-        virtual void setMaxCount(uint32_t) = 0;
-        virtual void setPosition(uint32_t) = 0;
-    };
-
-    struct fixed_range_t : public node_t {
-        std::string characters;
-
-        fixed_range_t(std::string const& str) : characters(str) {}
-
-        uint32_t apply(std::vector<char>& storage, uint32_t offset) override {
-            memcpy(storage.data() + offset, characters.data(), characters.size());
-            return offset + characters.size();
-        }
-
-        void selectNextPermutation() override {}
-        void addAlphabet(const char* first, const char* last) override {}
-        void addAlphabet(const char c) override {}
-
-        void setCount(uint32_t) override {}
-        void setMinCount(uint32_t) override {}
-        void setMaxCount(uint32_t) override {}
-        void setPosition(uint32_t) override {}
-    };
-
-    struct replacement_range_t : public node_t {
-        uint32_t minCount = 0;
-        uint32_t maxCount = 0;
-        size_t position = 0;
-        std::set<char> alphabet;
-
-        uint32_t apply(std::vector<char>& storage, uint32_t offset) {
-			
-			return 0;
-        }
-
-        void selectNextPermutation() override {
-        }
-
-        void addAlphabet(const char* first, const char* last) override {
-            alphabet.insert(first, last);
-        }
-
-        void addAlphabet(const char c) override {
-            alphabet.insert(c);
-        }
-
-        void setCount(uint32_t c) override { minCount = maxCount = c; }
-        void setMinCount(uint32_t c) override { minCount = c; }
-        void setMaxCount(uint32_t c) override { maxCount = c; }
-        void setPosition(uint32_t p) override { position = p; }
-    };
-    
     node_t* head = nullptr;
     node_t* tail = nullptr;
 
 public:
-    pattern_t(std::string_view regex) {
-        // The supported regex expressions are trivial.
-        // Count modifiers: {min, max} or {count}
-        // Ranges: [alpha], [num], [hex], [alnum], [path], [a-z]
-        //    To combine ranges: [alpha|num].
-
-        size_t patternStartItr = regex.find('[', 0);
-        size_t patternEndItr = regex.find(']', patternStartItr + 1);
-
-        if (patternStartItr != 0)
-            head = tail = new fixed_range_t(std::string(regex.substr(0, patternStartItr)));
-
-        size_t currentReplacementPosition = patternStartItr;
-        while (patternStartItr != std::string::npos) {
-
-            if (patternStartItr != std::string::npos) {
-                patternEndItr = regex.find(']', patternStartItr + 1);
-
-				if (head == nullptr)
-					head = tail = new replacement_range_t();
-				else if (tail->next == nullptr)
-					tail = tail->next = new replacement_range_t();
-
-                auto rangesNames = regex.substr(patternStartItr + 1, patternEndItr - patternStartItr - 1);
-
-                auto patternHandler = [tail = this->tail](std::string_view const& r) -> void {
-                    if (r == "hex") {
-                        constexpr const char hex_alphabet[] = "ABCDEF0123456789";
-                        tail->addAlphabet(hex_alphabet, hex_alphabet + sizeof(hex_alphabet));
-                    } else if (r == "alpha") {
-                        constexpr const char alpha_alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ ";
-                        tail->addAlphabet(alpha_alphabet, alpha_alphabet + sizeof(alpha_alphabet));
-                    } else if (r == "num") {
-                        constexpr const char num_alphabet[] = "0123456789";
-                        tail->addAlphabet(num_alphabet, num_alphabet + sizeof(num_alphabet));
-                    } else if (r == "alnum" || r == "alphanum") {
-                        constexpr const char num_alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ";
-                        tail->addAlphabet(num_alphabet, num_alphabet + sizeof(num_alphabet));
-                    } else if (r == "path") {
-                        constexpr const char path_alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_. \\";
-                        tail->addAlphabet(path_alphabet, path_alphabet + sizeof(path_alphabet));
-                    } else {
-                        size_t splitPos = r.find('-');
-                        if (splitPos == std::string::npos) {
-                            throw std::runtime_error("invalid range");
-                        } else {
-                            char startCharacter = std::toupper(r[splitPos - 1]);
-                            char endCharacter = std::toupper(r[splitPos + 1]);
-
-                            for (; startCharacter <= endCharacter; ++startCharacter)
-                                tail->addAlphabet(startCharacter);
-                        }
-                    }
-                };
-
-                size_t rangeEndItr = rangesNames.find('|');
-                size_t rangeStartItr = 0;
-                while (rangeEndItr != std::string::npos) {
-                    auto range = rangesNames.substr(rangeStartItr, rangeEndItr - rangeStartItr);
-                    patternHandler(range);
-                    rangeStartItr = rangeEndItr + 1;
-                    rangeEndItr = rangesNames.find('|', rangeStartItr);
-                }
-                patternHandler(rangesNames.substr(rangeStartItr, rangesNames.size() - rangeStartItr));
-            
-                size_t endCountDelim = regex.find('}', patternEndItr + 2);
-
-                if (regex[patternEndItr + 1] == '{') { // x to y, or x
-                    size_t comma_pos = regex.find(',', patternEndItr + 2);
-                    if (comma_pos == std::string::npos) { // x
-                        tail->setCount(std::stoi(std::string(regex.substr(patternEndItr + 2, endCountDelim - patternEndItr - 2))));
-                    }
-                    else { // x to y
-                        tail->setMinCount(std::stoi(std::string(regex.substr(patternEndItr + 2, comma_pos - patternEndItr - 2))));
-                        tail->setMaxCount(std::stoi(std::string(regex.substr(comma_pos + 1, endCountDelim - comma_pos - 1))));
-                    }
-                }
-                else
-                    throw std::runtime_error("invalid pattern");
-            
-                tail->setPosition(currentReplacementPosition);
-                currentReplacementPosition += 1;
-
-                size_t oldStart = patternStartItr;
-                patternStartItr = regex.find('[', patternStartItr + 1);
-
-				tail = tail->next = new fixed_range_t(std::string(regex.substr(endCountDelim + 1, patternStartItr - endCountDelim - 1)));
-
-				if (patternStartItr != std::string::npos) {
-					currentReplacementPosition = patternStartItr - (endCountDelim - oldStart);
-				}
-            }
-        }
-    }
+    pattern_t(std::string_view regex);
 
     ~pattern_t() {
 		//TODO: blowing up the stack here would be fun; wouldn't it?
@@ -188,4 +119,6 @@ public:
         last_deleter(head);
         tail = nullptr;
     }
+
+    void collect(std::vector<uploaded_string>& bucket);
 };

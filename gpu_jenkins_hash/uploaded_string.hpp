@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <string>
 #include <algorithm>
+#include <vector>
 #include <vulkan/vulkan.h>
 
 #pragma pack(push, 1)
@@ -23,7 +24,7 @@ struct uploaded_string {
 
     uploaded_string(char* in) {
         char_count = int32_t(strlen(in));
-        memcpy(words, in, std::min(uint64_t(char_count), sizeof(words)));
+        memcpy(words, in, std::min(size_t(char_count), sizeof(words)));
         hash = 0;
     }
 };
