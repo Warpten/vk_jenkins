@@ -3,17 +3,35 @@
 #include <cstdint>
 #include <string>
 #include <algorithm>
+#include <string_view>
 #include <vector>
 #include <vulkan/vulkan.h>
 
+#include "lookup3.hpp"
+
+struct pattern_t;
+
 #pragma pack(push, 1)
 struct uploaded_string {
+     // easier for this to have internals access
+    friend struct pattern_t;
+
+private:
     int32_t char_count;
     uint32_t hash;
     uint32_t words[32 * 3];
 
-    std::string value() const {
-        return std::string(reinterpret_cast<const char*>(words), static_cast<size_t>(char_count)); //-V206
+public:
+    uint32_t get_hash() const {
+        return hash;
+    }
+
+    uint32_t get_cpu_hash() const {
+        return hashlittle((const void*)words, char_count, 0);
+    }
+
+    std::string_view value() const {
+        return std::string_view(reinterpret_cast<const char*>(words), static_cast<size_t>(char_count)); //-V206
     }
 
     uploaded_string() {
@@ -22,10 +40,12 @@ struct uploaded_string {
         hash = 0;
     }
 
-    uploaded_string(char* in) {
-        char_count = int32_t(strlen(in));
-        memcpy(words, in, std::min(size_t(char_count), sizeof(words)));
+    uploaded_string& operator = (std::string_view const& sv) {
         hash = 0;
+        char_count = sv.size();
+        memset(words, 0, sizeof(words));
+        memcpy(words, sv.data(), sv.size());
+        return *this;
     }
 };
 #pragma pack(pop)

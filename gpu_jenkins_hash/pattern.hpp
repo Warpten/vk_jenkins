@@ -1,5 +1,6 @@
 #pragma once
 
+#include "string_view_range.hpp"
 #include "uploaded_string.hpp"
 
 #include <cstdint>
@@ -22,6 +23,10 @@ struct node_t {
     virtual bool has_next() = 0;
     virtual void move_next() = 0;
 
+    virtual uint32_t count() = 0;
+
+    virtual std::vector<std::string> const& values() = 0;
+
     node_t* next = nullptr;
 };
 
@@ -30,7 +35,7 @@ struct raw_range_t final : public node_t {
     virtual ~raw_range_t() { }
 
 private:
-    std::string characters;
+    std::vector<std::string> val;
 
 public:
     uint32_t apply(std::vector<char>& storage, uint32_t offset) override;
@@ -38,7 +43,13 @@ public:
 
     void reset() override { }
     bool has_next() override { return false; }
-    virtual void move_next() override { }
+    void move_next() override { }
+
+    uint32_t count() override { return 1; }
+
+    virtual std::vector<std::string> const& values() {
+        return val;
+    }
 };
 
 // size modifier {x, y} {x}
@@ -56,6 +67,8 @@ public:
     virtual void reset() = 0;
     virtual bool has_next() = 0;
     virtual void move_next() = 0;
+
+    virtual uint32_t count() = 0;
 };
 
 // array (x|y|z)
@@ -63,8 +76,8 @@ struct array_range_t final : public size_specified_range_t {
     virtual ~array_range_t() { }
 
 private:
-    std::vector<std::string> values;
-    decltype(values)::const_iterator itr;
+    std::vector<std::string> vals;
+    decltype(vals)::const_iterator itr;
 
 public:
     uint32_t apply(std::vector<char>& storage, uint32_t offset) override;
@@ -73,6 +86,10 @@ public:
     void reset() override;
     bool has_next() override;
     void move_next() override;
+
+    uint32_t count() { return vals.size(); }
+
+    std::vector<std::string> const& values() override { return vals; }
 };
 
 // ranges [a-z|alpha|alnum|num|hex|path]
@@ -82,8 +99,8 @@ struct varying_range_t : public size_specified_range_t {
 private:
     std::set<char> universe;
 
-    std::vector<std::string> values;
-    decltype(values)::const_iterator itr;
+    std::vector<std::string> vals;
+    decltype(vals)::const_iterator itr;
 
 public:
     uint32_t apply(std::vector<char>& storage, uint32_t offset) override;
@@ -91,6 +108,10 @@ public:
     void reset() override;
     bool has_next() override;
     void move_next() override;
+
+    uint32_t count() { return vals.size(); }
+
+    std::vector<std::string> const& values() override { return vals; }
 
 private:
     void generate_perms();
@@ -101,6 +122,9 @@ struct pattern_t {
 private:
     node_t* head = nullptr;
     node_t* tail = nullptr;
+
+    std::vector<string_view_range<char>> vals;
+    decltype(vals)::const_iterator itr;
 
 public:
     pattern_t(std::string_view regex);
@@ -120,5 +144,8 @@ public:
         tail = nullptr;
     }
 
+    uint32_t count();
+
     void collect(std::vector<uploaded_string>& bucket);
 };
+

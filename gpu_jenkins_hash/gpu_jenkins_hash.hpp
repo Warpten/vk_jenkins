@@ -10,6 +10,21 @@
 #include <algorithm>
 #include <optional>
 
+// FUTURE
+/*
+struct jenkins_shader_32 {
+    using result_type = uint32_t;
+
+    constexpr static const char shader_name[] = "shaders/jenkins32.comp";
+};
+
+struct jenkins_shader_64 {
+    using result_type = uint64_t;
+
+    constexpr static const char shader_name[] = "shaders/jenkins64.comp";
+};
+*/
+
 struct Device {
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
     VkDevice device = VK_NULL_HANDLE;

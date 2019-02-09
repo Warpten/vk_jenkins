@@ -1,4 +1,7 @@
 #include "pattern.hpp"
+#include "string_view_range.hpp"
+
+#include <iostream>
 
 auto find_delimiter(std::string_view const& view, char delimiter, size_t ofs = std::string::npos) -> size_t {
 
@@ -27,14 +30,14 @@ std::string_view raw_range_t::parse(std::string_view view)
     if (delim == 0)
         return view;
 
-    characters = view.substr(std::min(0u, delim), std::min(view.size(), delim));
-    return view.substr(characters.size());
+    val.push_back(std::string(view.substr(std::min(0u, delim), std::min(view.size(), delim))));
+    return view.substr(val[0].size());
 }
 
 uint32_t raw_range_t::apply(std::vector<char>& storage, uint32_t offset) {
-    storage.resize(storage.size() + characters.size());
-    memcpy(storage.data() + offset, characters.data(), characters.size());
-    return offset + characters.size();
+    storage.resize(storage.size() + val[0].size());
+    memcpy(storage.data() + offset, val[0].data(), val[0].size());
+    return offset + val[0].size();
 }
 
 // parse size decoration {x, y} or {x} /////////////////////
@@ -83,11 +86,11 @@ std::string_view array_range_t::parse(std::string_view view) {
     for (;;) {
         splitterOfs = find_delimiter(work_view, '|', splitterOfs);
         if (splitterOfs != std::string::npos) {
-            values.emplace_back(work_view.substr(startOffset, splitterOfs));
+            vals.emplace_back(work_view.substr(startOffset, splitterOfs));
             startOffset = splitterOfs + 1;
         }
         else {
-            values.emplace_back(work_view.substr(startOffset));
+            vals.emplace_back(work_view.substr(startOffset));
             break;
         }
     }
@@ -98,11 +101,11 @@ std::string_view array_range_t::parse(std::string_view view) {
 }
 
 void array_range_t::reset() {
-    itr = values.begin();
+    itr = vals.begin();
 }
 
 bool array_range_t::has_next() {
-    return itr != values.end();
+    return itr != vals.end();
 }
 
 uint32_t array_range_t::apply(std::vector<char>& storage, uint32_t offset) {
@@ -189,11 +192,11 @@ uint32_t varying_range_t::apply(std::vector<char>& storage, uint32_t offset) {
 }
 
 void varying_range_t::reset() {
-    itr = values.begin();
+    itr = vals.begin();
 }
 
 bool varying_range_t::has_next() {
-    return itr != values.end();
+    return itr != vals.end();
 }
 
 void varying_range_t::move_next() {
@@ -201,8 +204,8 @@ void varying_range_t::move_next() {
 }
 
 void varying_range_t::generate_perms() {
-    values.clear();
-    values = std::move(generate_perms(min_count, max_count));
+    vals.clear();
+    vals = std::move(generate_perms(min_count, max_count));
     reset();
 }
 
@@ -216,7 +219,7 @@ std::vector<std::string> varying_range_t::generate_perms(uint32_t minCount, uint
     if (maxCount == 1)
         return results;
 
-    auto rec = generate_perms(minCount - 1, maxCount - 1);
+    auto rec = generate_perms(std::min(0u, minCount - 1), maxCount - 1);
 
     for (auto c : universe)
         for (auto subset : rec)
@@ -224,8 +227,6 @@ std::vector<std::string> varying_range_t::generate_perms(uint32_t minCount, uint
 
     return results;
 }
-
-// OLD CODE BELOW
 
 template <typename T, typename... Ts>
 struct chain_tester {
@@ -263,6 +264,26 @@ struct chain_tester<T> {
     }
 };
 
+std::vector<string_view_range<char>> fold(std::vector<string_view_range<char>>& left, std::vector<std::string> const& right)
+{
+    std::vector<string_view_range<char>> bucket(left.size() * right.size());
+    uint32_t i = 0;
+    for (string_view_range<char> const& l : left) {
+        for (std::string const& r : right) {
+            for (auto&& n : l.elems)
+                bucket[i].push_back(n);
+
+            bucket[i].push_back(std::string_view(r.data(), r.size()));
+
+            ++i;
+        }
+    }
+
+    left.clear();
+
+    return bucket;
+}
+
 pattern_t::pattern_t(std::string_view regex)
 {
     using full_tester_t = chain_tester<raw_range_t, array_range_t, varying_range_t>;
@@ -282,6 +303,34 @@ pattern_t::pattern_t(std::string_view regex)
     if (regex.size() > 0)
         throw std::runtime_error("Failed to parse pattern");
 
+    std::vector<string_view_range<>> all_values;
+    all_values.reserve(count());
+
+    node_t* h = head;
+    uint32_t idx = 0;
+    vals.resize(h->values().size());
+    for (std::string const& i : h->values())
+        vals[idx++].push_back(std::string_view(i.data(), i.size()));
+
+    h = h->next;
+    while (h != nullptr) {
+        vals = fold(vals, h->values());
+        h = h->next;
+    }
+
+    itr = vals.begin();
+}
+
+uint32_t pattern_t::count()
+{
+    uint32_t count = 1;
+    node_t* h = head;
+    while (h != nullptr) {
+        count *= h->count();
+        h = h->next;
+    }
+
+    return count;
 }
 
 void pattern_t::collect(std::vector<uploaded_string>& bucket)
@@ -292,22 +341,22 @@ void pattern_t::collect(std::vector<uploaded_string>& bucket)
     bucket.resize(bucket.capacity());
     for (uploaded_string& str : bucket)
     {
-        std::vector<char> string;
-
-        node_t* t = head;
-        uint32_t offset = 0;
-        while (t != nullptr) {
-            offset = t->apply(string, offset);
-            t = t->next;
-        }
-
-        if (string.size() == 0)
+        if (itr == vals.end())
             break;
 
-        str.char_count = string.size();
-        memcpy(str.words, string.data(), str.char_count);
+        str.char_count = itr->full_length;
+        str.hash = 0;
+
+        memset(str.words, 0, sizeof(str.words));
+
+        size_t ofs = 0;
+        for (uint32_t i = 0; i < itr->elems.size(); ++i) {
+            memcpy(reinterpret_cast<char*>(str.words) + ofs, itr->elems[i].data(), itr->elems[i].size());
+            ofs += itr->elems[i].size();
+        }
 
         ++actualSize;
+        ++itr;
     }
 
     // Resize down so we don't advertise as having more data than we really have

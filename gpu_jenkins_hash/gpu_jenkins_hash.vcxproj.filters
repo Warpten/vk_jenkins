@@ -39,6 +39,9 @@
     <ClInclude Include="pattern.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="string_view_range.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="gpu_jenkins_hash.cpp">
@@ -56,10 +59,10 @@
     <ClCompile Include="renderdoc.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="metrics.cpp">
-      <Filter>Header Files</Filter>
-    </ClCompile>
     <ClCompile Include="pattern.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="metrics.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

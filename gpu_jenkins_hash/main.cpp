@@ -45,12 +45,8 @@ public:
 };
 
 int main(int argc, char* argv[]) {
-    std::vector<uploaded_string> bucket(64);
-    pattern_t pattern("[a-c]{1, 2}nterface/[0-9]/bah.mp3");
-    pattern.collect(bucket);
-
-    for (auto&& itr : bucket)
-        std::cout << "Generated " << itr.value() << std::endl;
+    pattern_t pattern("PUT/THE/MEMES/IN/THE/[a-c]{1, 7}/INTERFACE/[0-9]/BAG.MP3");
+    std::cout << pattern.count() << " permutations." << std::endl;
 
     options_t options(argv, argv + argc); //-V104
 
@@ -75,7 +71,13 @@ int main(int argc, char* argv[]) {
         std::cout
             << "--workgroupSize     This parameter defines the amount of work each workgroup can process.\n"
             << "                    The default value is 64, which is the bare minimum for any kind of performance benefit.\n\n"
+            //                                                        because workgroup size y and z are 1
             << "                    This value should not exceed " << std::min(limits.maxComputeWorkGroupSize[0], limits.maxComputeWorkGroupInvocations) << " on your system.\n\n";
+        std::cout
+            << "--validate          Performs checks of GPU-computed values against CPU-computed values. You generally do not want to run"
+            << "                    with this flag, since it's going to kill your hash rate. This is a boolean flag, it doesn't require"
+            << "                    a value.\n\n"
+            << "                    Use for debugging only.\n\n";
 
         if (!options.has("--input")) {
             std::cout << "Press a key to exit" << std::endl;
@@ -135,34 +137,35 @@ int main(int argc, char* argv[]) {
     std::cout << "Workgroup count: " << app.getParams().workgroupCount << std::endl;
     std::cout << "Workgroup size: " << app.getParams().workgroupSize << std::endl;
 
-    app.setDataProvider([&input](std::vector<uploaded_string>* data) -> void {
+    app.setDataProvider([&input, &pattern](std::vector<uploaded_string>* data) -> void {
         size_t i = 0;
+
+        // pattern.collect(*data);
 
         for (; i < data->capacity() && input.hasNext(); ++i) {
             uploaded_string& element = (*data)[i];
-
-            auto item = input.next();
-            element.char_count = (uint32_t)item.size();
-
-            memset(element.words, 0, sizeof(element.words));
-            memcpy(element.words, item.data(), item.size());
+            element = input.next();
         }
 
         data->resize(i);
     });
 
     size_t output = 0;
-    app.setOutputHandler([&output](std::vector<uploaded_string>* data) -> void {
+    std::vector<std::string> failed_hashes;
+    app.setOutputHandler([&output, &options, &failed_hashes](std::vector<uploaded_string>* data) -> void {
         // No-op for the first call of each frame
         if (data->size() == 0)
             return;
 
-        for (uploaded_string const& itr : *data)
+        if (options.has("--validate"))
         {
-            uint32_t gpuHash = itr.hash;
-            uint32_t cpuHash = hashlittle((const void*)itr.value().c_str(), itr.char_count, 0);
-            if (gpuHash != cpuHash)
-                std::cout << "Invalid hash for " << itr.value() << " (got " << std::hex << gpuHash << ", expected " << cpuHash << ")" << std::endl;
+            for (uploaded_string const& itr : *data)
+            {
+                uint32_t gpuHash = itr.get_hash();
+                uint32_t cpuHash = itr.get_cpu_hash();
+                if (gpuHash != cpuHash)
+                    failed_hashes.push_back(std::string(itr.value()));
+            }
         }
 
         output += data->size();
@@ -177,11 +180,21 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
     }
 
+    if (failed_hashes.size() > 0 && options.has("--validate")) {
+        std::cout << "Examples of failed hashes: " << std::endl;
+        for (auto&& itr : failed_hashes)
+            std::cout << "[] " << itr << std::endl;
+        std::cout << std::endl;
+    }
+
     std::cout << "Hash rate: "
         << std::dec << uint64_t(metrics::hashes_per_second()) << " hashes per second ("
         << metrics::total() << " hashes expected, "
-        << output << " total, "
-        << metrics::elapsed_time().c_str() << " s)" << std::endl;
+        << output << " total, ";
+    if (options.has("--validate"))
+        std::cout << (output - failed_hashes.size()) << " correct, " << (failed_hashes.size()) << " wrong, ";
+
+    std::cout << metrics::elapsed_time().c_str() << " s)" << std::endl;
     std::cout << "Done! Press a key to exit" << std::endl;
 
     std::cin.get();
