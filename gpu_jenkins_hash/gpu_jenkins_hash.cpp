@@ -1,4 +1,5 @@
 #include <iostream>
+#include <sstream>
 #include <cstdint>
 #include <optional>
 #include <fstream>
@@ -63,8 +64,8 @@ void JenkinsGpuHash::run()
 void JenkinsGpuHash::createBuffers()
 {
     for (Frame& frame : _frames) {
-        frame.hostBuffer.setMaximumElementCount(params.workgroupCount, params.workgroupSize);
-        frame.deviceBuffer.setMaximumElementCount(params.workgroupCount, params.workgroupSize);
+        frame.hostBuffer.setMaximumElementCount(params.getCompleteDataSize());
+        frame.deviceBuffer.setMaximumElementCount(params.getCompleteDataSize());
 
         // Staging buffer
         createBuffer(
@@ -85,6 +86,7 @@ void JenkinsGpuHash::createBuffers()
         // Input buffer on binding 0
         frame.deviceBuffer.binding = 0;
 
+        frame.hostBuffer.map(_device.device);
     }
 
     createBuffer(
@@ -97,53 +99,75 @@ void JenkinsGpuHash::createBuffers()
 
 void JenkinsGpuHash::mainLoop()
 {
-    auto provide_data = [this](std::vector<uploaded_string>* data) -> void {
-        this->_dataProvider(data);
+    auto provide_data = [this](uploaded_string* data) -> size_t {
+        return this->_dataProvider(data, this->params.getCompleteDataSize());
     };
     try {
         metrics::start();
 
         VkResult result;
 
-        // First iteration of each frame
-        std::vector<uploaded_string> data(params.workgroupCount * params.workgroupSize);
-
         for (Frame& frame : _frames) {
-            provide_data(&data);
-            if (data.size() == 0)
+
+            beginFrame();
+
+            size_t written_count = provide_data(frame.hostBuffer.data);
+            _frames[_currentFrame].hostBuffer.item_count = written_count;
+            if (written_count == 0)
                 break;
 
-            result = submitWork(data, true);
+            metrics::increment(written_count);
+            frame.hostBuffer.flush(_device.device);
+
+            result = submitFrame();
+#if _DEBUG
             if (result != VK_SUCCESS)
                 throw std::runtime_error("vkQueueSubmit failed");
+#endif
         }
 
+        std::cout << "main work" << std::endl;
         _currentFrame = 0;
 
         while (true) {
-            provide_data(&data);
-            if (data.size() == 0)
+            beginFrame();
+
+            // Handle previous output
+            _outputHandler(_frames[_currentFrame].hostBuffer.data, _frames[_currentFrame].hostBuffer.item_count);
+
+            // Write new input
+            size_t written_count = provide_data(_frames[_currentFrame].hostBuffer.data);
+            _frames[_currentFrame].hostBuffer.item_count = written_count;
+            if (written_count == 0)
                 break;
 
-            result = submitWork(data);
+            metrics::increment(written_count);
+            _frames[_currentFrame].hostBuffer.flush(_device.device);
+
+            result = submitFrame();
+#if _DEBUG
             if (result != VK_SUCCESS)
                 throw std::runtime_error("vkQueueSubmit failed");
+#endif
         }
+
+        std::cout << "collecting remnants" << std::endl;
 
         // We may have left the loop because we got no data to send,
         // but there is still some data left in the pipe
         // We thus must iterate a third time, but just collect data
         for (size_t i = 0; i < _frames.size(); ++i) {
-            Frame& frame = _frames[_currentFrame++];
-
-            vkWaitForFences(_device.device, 1, &frame.flightFence, VK_TRUE, UINT64_MAX);
-
-            auto frameOutput = frame.hostBuffer.read(_device.device);
-            if (frameOutput.size() > 0)
-                _outputHandler(&frameOutput);
-
             if (_currentFrame == _frames.size())
                 _currentFrame = 0;
+
+            Frame& frame = _frames[_currentFrame++];
+
+            if (frame.hostBuffer.item_count == 0)
+                continue;
+
+            vkWaitForFences(_device.device, 1, &frame.flightFence, VK_TRUE, UINT64_MAX);
+            _outputHandler(frame.hostBuffer.data, frame.hostBuffer.item_count);
+
         }
 
         metrics::stop();
@@ -190,7 +214,12 @@ VkResult JenkinsGpuHash::createBuffer(VkBufferUsageFlags usageFlags, VkMemoryPro
         throw std::runtime_error("memory type not found");
 
     if (vkAllocateMemory(_device.device, &memAlloc, nullptr, memory) != VK_SUCCESS)
-        throw std::runtime_error("unable to allocate memory for the buffer");
+    {
+        std::stringstream s;
+        s << "Unable to allocate memory for the buffer(" << size << " bytes requested)";
+
+        throw std::runtime_error(s.str().c_str());
+    }
 
     if (data != nullptr) {
         void *mapped;
@@ -415,10 +444,8 @@ void JenkinsGpuHash::createComputePipeline()
     shaderSpecInfo.mapEntryCount = static_cast<uint32_t>(specMapEntries.size());
     shaderSpecInfo.pMapEntries = specMapEntries.data();
 
-    std::vector<uint32_t> workgroupSizes { params.workgroupSize };
-
-    shaderSpecInfo.dataSize = workgroupSizes.size() * sizeof(decltype(workgroupSizes)::value_type);
-    shaderSpecInfo.pData = workgroupSizes.data();
+    shaderSpecInfo.dataSize = sizeof(params.workgroupSize);
+    shaderSpecInfo.pData = params.workgroupSize;
 
     // Pipeline shader stage info.
     VkPipelineShaderStageCreateInfo compShaderStageInfo{};
@@ -446,7 +473,7 @@ void JenkinsGpuHash::createComputePipeline()
         VkCommandBuffer uploadCmd;
 
         // Reuse the first frame's staging buffer for this upload
-        VkDispatchIndirectCommand dispatch_args{ params.workgroupCount, 1, 1 };
+        VkDispatchIndirectCommand dispatch_args{ params.workgroupCount[0], params.workgroupCount[1], params.workgroupCount[2] };
         _frames[0].hostBuffer.write_raw(_device.device, &dispatch_args, sizeof(VkDispatchIndirectCommand));
 
         VkCommandBufferAllocateInfo allocInfo{};
@@ -590,21 +617,17 @@ void JenkinsGpuHash::createCommandBuffers()
     }
 }
 
-VkResult JenkinsGpuHash::submitWork(std::vector<uploaded_string> const& inputData, bool first)
+void JenkinsGpuHash::beginFrame()
 {
     renderdoc::begin_frame();
 
     vkWaitForFences(_device.device, 1, &_frames[_currentFrame].flightFence, VK_TRUE, UINT64_MAX);
     vkResetFences(_device.device, 1, &_frames[_currentFrame].flightFence);
+}
 
-    if (!first) {
-        auto previousOutputData = _frames[_currentFrame].hostBuffer.swap(_device.device, inputData);
-        _outputHandler(&previousOutputData);
-    } else {
-        _frames[_currentFrame].hostBuffer.write(_device.device, inputData);
-    }
-
-    VkSubmitInfo submitInfo {};
+VkResult JenkinsGpuHash::submitFrame()
+{
+    VkSubmitInfo submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &_frames[_currentFrame].commandBuffer;
@@ -618,8 +641,6 @@ VkResult JenkinsGpuHash::submitWork(std::vector<uploaded_string> const& inputDat
         _currentFrame = 0;
     }
 
-    // We don't really care WHEN stuff is done, we just keep track of HOW MANY are done
-    metrics::increment(inputData.size());
     return result;
 }
 

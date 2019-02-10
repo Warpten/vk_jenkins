@@ -16,9 +16,9 @@ struct string_view_range
         elems.push_back(elem);
     }
 
-    void push_back(std::string const& str) {
+    void push_back(std::basic_string<CharT> const& str) {
         full_length += str.size();
-        elems.push_back(std::string_view(str.data(), str.size()));
+        elems.push_back(std::basic_string_view<CharT>(str.data(), str.size()));
     }
 
     void pop() {
@@ -30,9 +30,8 @@ struct string_view_range
         return full_length;
     }
 
-    std::string as_string() const
-    {
-        std::string str;
+    std::basic_string<CharT> as_string() const {
+        std::basic_string<CharT> str;
         str.reserve(full_length);
 
         for (auto&& itr : elems)

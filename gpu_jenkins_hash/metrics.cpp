@@ -30,21 +30,24 @@ namespace metrics {
 
         // get number of milliseconds for the current second
         // (remainder after division into seconds)
-        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(_end - _start);
+        auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(_end - _start);
         auto s = std::chrono::duration_cast<std::chrono::seconds>(_end - _start);
-        ms -= s;
+        ns -= s;
 
         std::ostringstream oss;
         oss << std::setfill('0') // set field fill character to '0'
             << s.count()
             << "."
-            << std::setw(3)      // set width of milliseconds field
-            << ms.count();       // format milliseconds
+            << std::setw(6)      // set width of nanoseconds field
+            << ns.count();       // format nanoseconds
 
         return oss.str();
     }
 
     void increment(uint64_t count) {
+
+        // counter.atomic_store(counter.load(memory_order_seq_cst) + count, memory_order_seq_cst);
+
         counter += count;
     }
 

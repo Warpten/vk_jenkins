@@ -3,24 +3,34 @@
 #include <string>
 #include <vector>
 #include <fstream>
+#include <iostream>
+
+#include "pattern.hpp"
 
 struct input_file
 {
 public:
     input_file(const char* fpath);
 
-    std::string next() {
-        std::string tmp = nextLine;
-        if (!std::getline(fs, nextLine))
-            nextLine.clear();
-        return tmp;
+    bool next(uploaded_string& output) {
+        while (!current.has_next()) {
+            std::string line;
+            if (!std::getline(fs, line))
+                return false;
+
+            current.load(line);
+// #if _DEBUG
+            std::cout << "Loaded pattern '" << line << "' (" << current.count() << " possible values).\n";
+// #endif
+        }
+        return current.write(output);
     }
 
     bool hasNext() {
-        return nextLine.size() > 0;
+        return current.has_next() || !fs.eof();
     }
 
 private:
     std::fstream fs;
-    std::string nextLine;
+    pattern_t current;
 };

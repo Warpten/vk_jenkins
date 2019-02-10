@@ -4,6 +4,7 @@
 #include <iomanip>
 #include <string_view>
 #include <set>
+#include <array>
 
 #include "gpu_jenkins_hash.hpp"
 #include "input_file.hpp"
@@ -12,6 +13,14 @@
 #include "pattern.hpp"
 
 #include "lookup3.hpp"
+
+template <typename T, size_t N>
+std::array<T, N> make_array(std::initializer_list<T> list) {
+    std::array<T, N> arr;
+    for (uint32_t i = 0; i < N; ++i)
+        arr[i] = list[i];
+    return arr;
+}
 
 struct options_t {
 private:
@@ -35,18 +44,25 @@ public:
         return std::find(_vals.begin(), _vals.end(), key) != _vals.end();
     }
 
-    std::string getString(std::string_view  key) {
+    std::string_view getString(std::string_view  key) {
         auto idx = std::find(_vals.begin(), _vals.end(), key);
         if (idx == _vals.end())
             return "";
 
         return *(++idx);
     }
+
+    template <typename R>
+    auto get(std::string_view key, std::function<R(std::string_view, R)> t, R d) {
+        std::string_view value = getString(key);
+        if (value.size() == 0)
+            return d;
+        return t(value, d);
+    }
 };
 
 int main(int argc, char* argv[]) {
-    pattern_t pattern("PUT/THE/MEMES/IN/THE/[a-c]{1, 7}/INTERFACE/[0-9]/BAG.MP3");
-    std::cout << pattern.count() << " permutations." << std::endl;
+    pattern_t pattern("[a-c]{1,3}");
 
     options_t options(argv, argv + argc); //-V104
 
@@ -66,13 +82,17 @@ int main(int argc, char* argv[]) {
             << "                    The default value is 3.\n\n";
         std::cout
             << "--workgroupCount    This parameter defines the number of workgroups that can be dispatched at once.\n"
-            << "                    The default value is 3.\n\n"
-            << "                    This value should not exceed " << limits.maxComputeWorkGroupCount[0] << " on your system.\n\n";
+            << "                    The default value is '3,1,1'.\n\n"
+            << "                    This value should not exceed '" << limits.maxComputeWorkGroupCount[0] << ","
+                                                                    << limits.maxComputeWorkGroupCount[1] << ","
+                                                                    << limits.maxComputeWorkGroupCount[2] << "' on your system.\n\n";
         std::cout
             << "--workgroupSize     This parameter defines the amount of work each workgroup can process.\n"
-            << "                    The default value is 64, which is the bare minimum for any kind of performance benefit.\n\n"
-            //                                                        because workgroup size y and z are 1
-            << "                    This value should not exceed " << std::min(limits.maxComputeWorkGroupSize[0], limits.maxComputeWorkGroupInvocations) << " on your system.\n\n";
+            << "                    The default value is '64,64,64', which is the bare minimum for any kind of performance benefit.\n\n"
+            << "                    This value should not exceed '" << limits.maxComputeWorkGroupSize[0] << ","
+                                                                    << limits.maxComputeWorkGroupSize[1] << ","
+                                                                    << limits.maxComputeWorkGroupSize[2] << "' on your system.\n\n"
+            << "                    These values multiplied should also not exceed " << limits.maxComputeWorkGroupInvocations << " on your system.\n\n";
         std::cout
             << "--validate          Performs checks of GPU-computed values against CPU-computed values. You generally do not want to run"
             << "                    with this flag, since it's going to kill your hash rate. This is a boolean flag, it doesn't require"
@@ -87,13 +107,28 @@ int main(int argc, char* argv[]) {
         return EXIT_SUCCESS;
     }
 
-    input_file input(options.getString("--input").c_str());
+    input_file input(options.getString("--input").data());
 
-    // The number of workgroups.
-    app.setWorkgroupCount(options.get("--workgroupCount", 3));
+    std::function<std::array<uint32_t, 3>(std::string_view, std::array<std::uint32_t, 3>)> workgroupParser = [](std::string_view v, std::array<uint32_t, 3> def) -> std::array<uint32_t, 3> {
+        std::array<uint32_t, 3> sizes;
+        size_t ofs = 0;
+        for (uint32_t i = 0; i < 3; ++i) {
+            sizes[i] = std::atoi(v.data());
 
-    // The size of an individual work group.
-    app.setWorkgroupSize(options.get("--workgroupSize", 64));
+            size_t next = v.find(',');
+            if (next == std::string_view::npos && i < 2)
+                return def;
+            v = v.substr(next + 1);
+        }
+
+        return sizes;
+    };
+
+    std::array<uint32_t, 3> workgroupSize = options.get("--workgroupSize", workgroupParser, { 64, 1, 1 });
+    std::array<uint32_t, 3> workgroupCount = options.get("--workgroupCount", workgroupParser, { 3, 1, 1 });
+
+    app.setWorkgroupSize(workgroupSize[0], workgroupSize[1], workgroupSize[2]);
+    app.setWorkgroupCount(workgroupCount[0], workgroupCount[1], workgroupCount[2]);
 
     std::cout << "Running on: " << app.getDeviceProperties().deviceName << " (API Version "
         << VK_VERSION_MAJOR(app.getDeviceProperties().apiVersion) << "."
@@ -102,7 +137,6 @@ int main(int argc, char* argv[]) {
         << VK_VERSION_MAJOR(app.getDeviceProperties().driverVersion) << "."
         << VK_VERSION_MINOR(app.getDeviceProperties().driverVersion) << "."
         << VK_VERSION_PATCH(app.getDeviceProperties().driverVersion) << ")" << std::endl;
-
 
     // The maximum number of local workgroups that can be dispatched by a single dispatch command.
     // These three values represent the maximum number of local workgroups for the X, Y, and Z dimensions, respectively.
@@ -131,36 +165,50 @@ int main(int argc, char* argv[]) {
     // VkQueueFamilyProperties::queueFlags support VkQueueFamilyProperties::timestampValidBits of at least 36.
     std::cout << "    timestampComputeAndGraphics: " << (limits.timestampComputeAndGraphics ? "yes" : "no") << std::endl;
 
+    std::cout << "\n\n";
+
+    std::cout << "Hardware limits applied to user-defined configuration...\n";
+    std::cout << "\nWorkgroup count: { " << app.getParams().workgroupCount[0] << ", " << app.getParams().workgroupCount[1] << ", " << app.getParams().workgroupCount[2] << " }";
+    std::cout << "\nWorkgroup count: { " << app.getParams().workgroupSize[0] << ", " << app.getParams().workgroupSize[1] << ", " << app.getParams().workgroupSize[2] << " }";
+    std::cout << "\nNumber of lookahead frames: " << app.getFrameCount();
+
     std::cout << std::endl;
 
-    std::cout << "Hardware limits applied to user-defined configuration..." << std::endl;
-    std::cout << "Workgroup count: " << app.getParams().workgroupCount << std::endl;
-    std::cout << "Workgroup size: " << app.getParams().workgroupSize << std::endl;
-
-    app.setDataProvider([&input, &pattern](std::vector<uploaded_string>* data) -> void {
+    app.setDataProvider([&input](uploaded_string* data, size_t capacity) -> size_t {
         size_t i = 0;
 
-        // pattern.collect(*data);
+#if _DEBUG
+        auto s = std::chrono::high_resolution_clock::now();
+#endif
 
-        for (; i < data->capacity() && input.hasNext(); ++i) {
-            uploaded_string& element = (*data)[i];
-            element = input.next();
+        memset(data, 0, sizeof(uploaded_string) * capacity);
+        for (; i < capacity && input.hasNext(); ++i) {
+
+            uploaded_string& element = *data;
+            if (!input.next(element))
+                break;
+
+            // std::cout << element.value() << std::endl;
+
+            ++data;
         }
 
-        data->resize(i);
+#if _DEBUG
+        auto d = std::chrono::high_resolution_clock::now() - s;
+        // std::cout << "Uploading " << i << " values in " << std::chrono::duration_cast<std::chrono::microseconds>(d).count() << " us.\n";
+#endif
+        return i;
     });
 
     size_t output = 0;
     std::vector<std::string> failed_hashes;
-    app.setOutputHandler([&output, &options, &failed_hashes](std::vector<uploaded_string>* data) -> void {
-        // No-op for the first call of each frame
-        if (data->size() == 0)
-            return;
-
+    app.setOutputHandler([&output, &options, &failed_hashes](uploaded_string* data, size_t count) -> void {
         if (options.has("--validate"))
         {
-            for (uploaded_string const& itr : *data)
+            for (uint32_t i = 0; i < count; ++i)
             {
+                uploaded_string& itr = data[i];
+
                 uint32_t gpuHash = itr.get_hash();
                 uint32_t cpuHash = itr.get_cpu_hash();
                 if (gpuHash != cpuHash)
@@ -168,8 +216,7 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        output += data->size();
-        data->resize(0);
+        output += count;
     });
 
     try {

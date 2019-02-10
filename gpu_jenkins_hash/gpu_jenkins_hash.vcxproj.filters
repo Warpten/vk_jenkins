@@ -42,6 +42,9 @@
     <ClInclude Include="string_view_range.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="rolling_iterator.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="gpu_jenkins_hash.cpp">

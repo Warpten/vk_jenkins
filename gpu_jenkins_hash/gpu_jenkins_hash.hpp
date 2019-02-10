@@ -64,35 +64,45 @@ public:
 
     template <typename F>
     inline void setDataProvider(F f) {
-        _dataProvider = std::function<void(std::vector<uploaded_string>*)>(std::move(f));
+        _dataProvider = std::function<size_t(uploaded_string*, size_t)>(std::move(f));
     }
 
     template <typename F>
     inline void setOutputHandler(F f) {
-        _outputHandler = std::function<void(std::vector<uploaded_string>*)>(std::move(f));
+        _outputHandler = std::function<void(uploaded_string*, size_t)>(std::move(f));
     }
 
     struct params_t {
-        uint32_t workgroupCount = 0;
-        uint32_t workgroupSize = 64;
+        uint32_t workgroupCount[3] = { 0, 0, 0 };
+        uint32_t workgroupSize[3] = { 64, 0, 0 };
+
+        size_t getCompleteDataSize() const {
+            return workgroupSize[0] * workgroupSize[1] * workgroupSize[2]
+                * workgroupCount[0] * workgroupCount[1] * workgroupCount[2];
+        }
     };
 
-    void setWorkgroupCount(uint32_t size) {
-        params.workgroupCount = std::min(_device.properties.limits.maxComputeWorkGroupCount[0], size);
+    void setWorkgroupCount(uint32_t x, uint32_t y, uint32_t z) {
+        params.workgroupCount[0] = std::min(_device.properties.limits.maxComputeWorkGroupCount[0], x);
+        params.workgroupCount[1] = std::min(_device.properties.limits.maxComputeWorkGroupCount[1], y);
+        params.workgroupCount[2] = std::min(_device.properties.limits.maxComputeWorkGroupCount[2], z);
     }
 
-    void setWorkgroupSize(uint32_t size) {
-        params.workgroupSize = std::min(_device.properties.limits.maxComputeWorkGroupSize[0], size);
+    void setWorkgroupSize(uint32_t x, uint32_t y, uint32_t z) {
+        params.workgroupSize[0] = std::min(_device.properties.limits.maxComputeWorkGroupSize[0], x);
+        params.workgroupSize[1] = std::min(_device.properties.limits.maxComputeWorkGroupSize[1], y);
+        params.workgroupSize[2] = std::min(_device.properties.limits.maxComputeWorkGroupSize[2], z);
     }
 
-    params_t const& getParams() { return params; }
+    params_t const& getParams() const { return params; }
+    size_t getFrameCount() const { return _frames.size(); }
 
 private:
 
     params_t params;
 
-    std::function<void(std::vector<uploaded_string>*)> _dataProvider;
-    std::function<void(std::vector<uploaded_string>*)> _outputHandler;
+    std::function<size_t(uploaded_string*, size_t)> _dataProvider;
+    std::function<void(uploaded_string*, size_t)> _outputHandler;
 
     VkInstance _instance;
     VkDebugUtilsMessengerEXT _debugMessenger;
@@ -149,7 +159,8 @@ private:
 
     void createCommandBuffers();
 
-    VkResult submitWork(std::vector<uploaded_string> const& data, bool first = false);
+    void beginFrame();
+    VkResult submitFrame();
 
     void createBuffers();
 

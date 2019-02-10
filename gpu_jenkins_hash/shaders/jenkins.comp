@@ -3,100 +3,114 @@
 // Each input is a string in FourCC format, up to 32 indivual FourCC
 // Say we want to compute the hashes of strings 'ABCD' and 'EFGH'.
 // Our input would be { 'ABCD', 'EFGH' }.
-//   Each invocation of the shader within the work group then operates on INPUT[gl_GlobalInvocationID.x].
-//   Finally, output is written to INPUT[gl_GlobalInvocationID.x].hash.
+//   Each invocation of the shader within the work group then operates on INPUT[index].
+//   Finally, output is written to INPUT[index].hash.
 // And the work group is done.
 
 // This size is a specialization constant and fed through pipeline creation. The default value is 64.
-layout(local_size_x_id = 1) in;               
-layout(local_size_y = 1) in;
-layout(local_size_z = 1) in;
+layout(local_size_x_id = 1) in;
+// This size is a specialization constant and fed through pipeline creation. The default value is 1.
+layout(local_size_y_id = 1) in;
+// This size is a specialization constant and fed through pipeline creation. The default value is 1.
+layout(local_size_z_id = 1) in;
 
 struct input_words {
-	int char_count; // Number of bytes in the string
-	uint hash;
-	uint words[32 * 3]; // Maximum size: 32 * 3 * 32 = 3072 B.
+    int char_count; // Number of bytes in the string
+    uint hash;
+    uint words[32 * 3]; // Maximum size: 32 * 3 * 32 = 3072 B.
 };
 
 layout (std430, binding = 0) buffer _input_words {
-	input_words INPUT[];
+    input_words INPUT[];
 };
 
 void main()
 {
-	if (INPUT[gl_GlobalInvocationID.x].char_count == 0)
-		return;
-
-	uvec3 state;
-	state.x = 0xDEADBEEFu + INPUT[gl_GlobalInvocationID.x].char_count;
-	state.y = state.x;
-	state.z = state.x;
+    /*
+    * uvec3 gl_NumWorkGroups        global work group size we gave to glDispatchCompute()
+    * uvec3 gl_WorkGroupSize        local work group size we defined with layout
+    * uvec3 gl_WorkGroupID          position of current invocation in global work group
+    * uvec3 gl_LocalInvocationID    position of current invocation in local work group
+    * uvec3 gl_GlobalInvocationID   unique index of current invocation in global work group
+    *                               = gl_WorkGroupID * gl_WorkGroupSize + gl_LocalInvocationID
+    * uint gl_LocalInvocationIndex  1d index representation of gl_LocalInvocationID
+    */
+    // Compute actual invocation
+    uint index = gl_GlobalInvocationID.x + gl_GlobalInvocationID.y + gl_GlobalInvocationID.z;
 	
-	// Compute the amount of integers on which the characters fit
-	// (x + 3) & ~3 is basically aligning x **up** to the closest multiple of 4.
-	// We then divide by 4 to obtain the amount of integers with actual data in words[].
-	
-	int word_count = ((INPUT[gl_GlobalInvocationID.x].char_count + 3) & ~3) / 4;
+    if (INPUT[index].char_count == 0)
+        return;
+		
+    uvec3 state;
+    state.x = 0xDEADBEEFu + INPUT[index].char_count;
+    state.y = state.x;
+    state.z = state.x;
+    
+    // Compute the amount of integers on which the characters fit
+    // (x + 3) & ~3 is basically aligning x **up** to the closest multiple of 4.
+    // We then divide by 4 to obtain the amount of integers with actual data in words[].
+    
+    int word_count = ((INPUT[index].char_count + 3) & ~3) / 4;
 
-	int i = 0;
-	for (; i < word_count - 3; i += 3)
-	{
-		state.x += INPUT[gl_GlobalInvocationID.x].words[i];
-		state.y += INPUT[gl_GlobalInvocationID.x].words[i + 1];
-		state.z += INPUT[gl_GlobalInvocationID.x].words[i + 2];
+    int i = 0;
+    for (; i < word_count - 3; i += 3)
+    {
+        state.x += INPUT[index].words[i];
+        state.y += INPUT[index].words[i + 1];
+        state.z += INPUT[index].words[i + 2];
 
-		state.x -= state.z;                          // a -= c
-		state.x ^= (state.z << 4) | (state.z >> 28); // a ^= rot(c, 4)
-		state.z += state.y;                          // c += b
-		
-		state.y -= state.x; 						 // b -= a
-		state.y ^= (state.x << 6) | (state.x >> 26); // b ^= rot(a, 6)
-		state.x += state.z;                          // a += c
-		
-		state.z -= state.y;                          // c -= b
-		state.z ^= (state.y << 8) | (state.y >> 24); // c ^= rot(b, 8)
-		state.y += state.x;							 // b += a
-		
-		state.x -= state.z;                          // a -= c
-		state.x ^= (state.z << 16) | (state.z >> 16);// a ^= rot(c, 16)
-		state.z += state.y;                          // c += b
-		
-		state.y -= state.x;                          // b -= a
-		state.y ^= (state.x << 19) | (state.x >> 13);// b ^= rot(a, 19)
-		state.x += state.z;                          // a += c
-		
-		state.z -= state.y;                          // c -= b
-		state.z ^= (state.y << 4) | (state.y >> 28); // c ^= rot(b, 4)
-		state.y += state.x;                          // b += a
-	}
+        state.x -= state.z;                          // a -= c
+        state.x ^= (state.z << 4) | (state.z >> 28); // a ^= rot(c, 4)
+        state.z += state.y;                          // c += b
+        
+        state.y -= state.x;                          // b -= a
+        state.y ^= (state.x << 6) | (state.x >> 26); // b ^= rot(a, 6)
+        state.x += state.z;                          // a += c
+        
+        state.z -= state.y;                          // c -= b
+        state.z ^= (state.y << 8) | (state.y >> 24); // c ^= rot(b, 8)
+        state.y += state.x;                             // b += a
+        
+        state.x -= state.z;                          // a -= c
+        state.x ^= (state.z << 16) | (state.z >> 16);// a ^= rot(c, 16)
+        state.z += state.y;                          // c += b
+        
+        state.y -= state.x;                          // b -= a
+        state.y ^= (state.x << 19) | (state.x >> 13);// b ^= rot(a, 19)
+        state.x += state.z;                          // a += c
+        
+        state.z -= state.y;                          // c -= b
+        state.z ^= (state.y << 4) | (state.y >> 28); // c ^= rot(b, 4)
+        state.y += state.x;                          // b += a
+    }
 
-	// The final round of the hash just adds values to the state again, but this time
-	// the avalanche differs, and it's completely irrelevant to wether or not there were
-	// padding zeros there.
-	state.x += INPUT[gl_GlobalInvocationID.x].words[i];
-	state.y += INPUT[gl_GlobalInvocationID.x].words[i + 1];
-	state.z += INPUT[gl_GlobalInvocationID.x].words[i + 2];
-	
-	state.z ^= state.y;							  // c ^= b
-	state.z -= (state.y << 14) | (state.y >> 18); // c -= rot(b, 14)
+    // The final round of the hash just adds values to the state again, but this time
+    // the avalanche differs, and it's completely irrelevant to wether or not there were
+    // padding zeros there.
+    state.x += INPUT[index].words[i];
+    state.y += INPUT[index].words[i + 1];
+    state.z += INPUT[index].words[i + 2];
     
-	state.x ^= state.z;							  // a ^= c
-	state.x -= (state.z << 11) | (state.z >> 21); // a -= rot(c, 11)
+    state.z ^= state.y;                              // c ^= b
+    state.z -= (state.y << 14) | (state.y >> 18); // c -= rot(b, 14)
     
-	state.y ^= state.x;							  // b ^= a
-	state.y -= (state.x << 25) | (state.x >> 7);  // b -= rot(a, 25)
+    state.x ^= state.z;                              // a ^= c
+    state.x -= (state.z << 11) | (state.z >> 21); // a -= rot(c, 11)
     
-	state.z ^= state.y;							  // c ^= b
-	state.z -= (state.y << 16) | (state.y >> 16); // c -= rot(b, 16)
+    state.y ^= state.x;                              // b ^= a
+    state.y -= (state.x << 25) | (state.x >> 7);  // b -= rot(a, 25)
     
-	state.x ^= state.z;							  // a ^= c
-	state.x -= (state.z << 4) | (state.z >> 28);  // a -= rot(c, 4)
+    state.z ^= state.y;                              // c ^= b
+    state.z -= (state.y << 16) | (state.y >> 16); // c -= rot(b, 16)
     
-	state.y ^= state.x;							  // b ^= a
-	state.y -= (state.x << 14) | (state.x >> 18); // b -= rot(a, 14)
+    state.x ^= state.z;                              // a ^= c
+    state.x -= (state.z << 4) | (state.z >> 28);  // a -= rot(c, 4)
     
-	state.z ^= state.y;							  // c ^= b
-	state.z -= (state.y << 24) | (state.y >> 8);  // c -= rot(b, 24)
+    state.y ^= state.x;                              // b ^= a
+    state.y -= (state.x << 14) | (state.x >> 18); // b -= rot(a, 14)
+    
+    state.z ^= state.y;                              // c ^= b
+    state.z -= (state.y << 24) | (state.y >> 8);  // c -= rot(b, 24)
 
-	INPUT[gl_GlobalInvocationID.x].hash = state.z;
+    INPUT[index].hash = state.z;
 }

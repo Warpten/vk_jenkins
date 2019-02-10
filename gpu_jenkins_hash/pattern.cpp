@@ -13,8 +13,12 @@ auto find_delimiter(std::string_view const& view, char delimiter, size_t ofs = s
         {
             if (nextDelimiter == 0 || view[nextDelimiter - 1] != '\\')
                 break;
+
+            nextDelimiter += 1;
         }
-    } while (nextDelimiter != std::string::npos);
+        else
+            break;
+    } while (true);
 
     return nextDelimiter;
 };
@@ -30,13 +34,24 @@ std::string_view raw_range_t::parse(std::string_view view)
     if (delim == 0)
         return view;
 
-    val.push_back(std::string(view.substr(std::min(0u, delim), std::min(view.size(), delim))));
-    return view.substr(val[0].size());
+    std::string s(view.substr(std::min(size_t(0), delim), std::min(view.size(), delim)));
+    // Remove escape sequences
+    s.erase(std::remove(s.begin(), s.end(), '\\'), s.end());
+
+    for (char& c : s)
+    {
+        if (c == '/')
+            c = '\\';
+        else
+            c = std::toupper(c);
+    }
+
+    val.push_back(s);
+    return view.substr(s.size());
 }
 
-uint32_t raw_range_t::apply(std::vector<char>& storage, uint32_t offset) {
-    storage.resize(storage.size() + val[0].size());
-    memcpy(storage.data() + offset, val[0].data(), val[0].size());
+size_t raw_range_t::apply(char* storage, size_t offset) {
+    memcpy(storage + offset, val[0].data(), val[0].size());
     return offset + val[0].size();
 }
 
@@ -84,7 +99,7 @@ std::string_view array_range_t::parse(std::string_view view) {
     size_t startOffset = 0;
     size_t splitterOfs = 0;
     for (;;) {
-        splitterOfs = find_delimiter(work_view, '|', splitterOfs);
+        splitterOfs = find_delimiter(work_view, '|', splitterOfs + 1);
         if (splitterOfs != std::string::npos) {
             vals.emplace_back(work_view.substr(startOffset, splitterOfs));
             startOffset = splitterOfs + 1;
@@ -108,9 +123,8 @@ bool array_range_t::has_next() {
     return itr != vals.end();
 }
 
-uint32_t array_range_t::apply(std::vector<char>& storage, uint32_t offset) {
-    storage.resize(storage.size() + itr->size());
-    memcpy(storage.data() + offset, itr->data(), itr->size());
+size_t array_range_t::apply(char* storage, size_t offset) {
+    memcpy(storage + offset, itr->data(), itr->size());
     return offset + itr->size();
 }
 
@@ -168,7 +182,7 @@ std::string_view varying_range_t::parse(std::string_view view) {
     size_t startOffset = 0;
     size_t splitterOfs = 0;
     for (;;) {
-        splitterOfs = find_delimiter(work_view, '|', splitterOfs);
+        splitterOfs = find_delimiter(work_view, '|', splitterOfs + 1);
         if (splitterOfs != std::string::npos) {
             range_handler(work_view.substr(startOffset, splitterOfs - startOffset));
         }
@@ -180,52 +194,55 @@ std::string_view varying_range_t::parse(std::string_view view) {
 
     std::string_view retval = size_specified_range_t::parse(view.substr(end_delim + 1));
 
-    generate_perms();
+
+    itr = rolling_iterator<decltype(universe)::const_iterator>(universe.begin(), universe.end());
+    itr.expand(min_count);
 
     return retval;
 }
 
-uint32_t varying_range_t::apply(std::vector<char>& storage, uint32_t offset) {
-    storage.resize(storage.size() + itr->size());
-    memcpy(storage.data() + offset, itr->data(), itr->size());
-    return offset + itr->size();
+
+size_t varying_range_t::count() {
+    if (min_count == max_count) {
+        return size_t(std::pow(universe.size(), min_count));
+    }
+
+    size_t u = universe.size();
+
+    if (min_count == 1) {
+        return size_t((std::pow(u, max_count) - 1) * u) / (u - 1);
+    }
+
+    return size_t(std::pow(u, max_count - 1) - std::pow(u, min_count)) / (u - 1);
+}
+
+size_t varying_range_t::apply(char* storage, size_t offset) {
+    size_t size = itr.size();
+
+    memcpy(storage + offset, itr.current(), size);
+
+    return offset + size;
 }
 
 void varying_range_t::reset() {
-    itr = vals.begin();
+    itr.shrink_to(min_count);
 }
 
 bool varying_range_t::has_next() {
-    return itr != vals.end();
+    // if done on the gen we have work if not last gen
+    if (itr.all_done())
+        return itr.size() < max_count;
+
+    // otherwise more work if gen not dont
+    return !itr.all_done();
 }
 
 void varying_range_t::move_next() {
-    ++itr;
-}
-
-void varying_range_t::generate_perms() {
-    vals.clear();
-    vals = std::move(generate_perms(min_count, max_count));
-    reset();
-}
-
-std::vector<std::string> varying_range_t::generate_perms(uint32_t minCount, uint32_t maxCount) {
-    std::vector<std::string> results;
-
-    if (minCount <= 1)
-        for (char c : universe)
-            results.emplace_back(1, c);
-
-    if (maxCount == 1)
-        return results;
-
-    auto rec = generate_perms(std::min(0u, minCount - 1), maxCount - 1);
-
-    for (auto c : universe)
-        for (auto subset : rec)
-            results.push_back(c + subset);
-
-    return results;
+    itr.move_next();
+    // if done on this level but there's more, expand
+    if (itr.all_done())
+        if (itr.size() < max_count)
+            itr.expand();
 }
 
 template <typename T, typename... Ts>
@@ -264,28 +281,15 @@ struct chain_tester<T> {
     }
 };
 
-std::vector<string_view_range<char>> fold(std::vector<string_view_range<char>>& left, std::vector<std::string> const& right)
-{
-    std::vector<string_view_range<char>> bucket(left.size() * right.size());
-    uint32_t i = 0;
-    for (string_view_range<char> const& l : left) {
-        for (std::string const& r : right) {
-            for (auto&& n : l.elems)
-                bucket[i].push_back(n);
-
-            bucket[i].push_back(std::string_view(r.data(), r.size()));
-
-            ++i;
-        }
-    }
-
-    left.clear();
-
-    return bucket;
-}
-
 pattern_t::pattern_t(std::string_view regex)
 {
+    load(regex);
+}
+
+void pattern_t::load(std::string_view regex)
+{
+    reset();
+
     using full_tester_t = chain_tester<raw_range_t, array_range_t, varying_range_t>;
 
     node_t* node = nullptr;
@@ -295,35 +299,29 @@ pattern_t::pattern_t(std::string_view regex)
             head = node;
 
         if (tail != nullptr)
+        {
+            node->prev = tail;
             tail->next = node;
+        }
+
+        // lock all nodes...
+        node->lock();
 
         tail = node;
     }
 
+    // ... except the last one
+    tail->unlock();
+
     if (regex.size() > 0)
         throw std::runtime_error("Failed to parse pattern");
 
-    std::vector<string_view_range<>> all_values;
-    all_values.reserve(count());
-
-    node_t* h = head;
-    uint32_t idx = 0;
-    vals.resize(h->values().size());
-    for (std::string const& i : h->values())
-        vals[idx++].push_back(std::string_view(i.data(), i.size()));
-
-    h = h->next;
-    while (h != nullptr) {
-        vals = fold(vals, h->values());
-        h = h->next;
-    }
-
-    itr = vals.begin();
+    idx = count();
 }
 
-uint32_t pattern_t::count()
+size_t pattern_t::count() const
 {
-    uint32_t count = 1;
+    size_t count = 1;
     node_t* h = head;
     while (h != nullptr) {
         count *= h->count();
@@ -333,32 +331,52 @@ uint32_t pattern_t::count()
     return count;
 }
 
-void pattern_t::collect(std::vector<uploaded_string>& bucket)
+bool pattern_t::has_next() const
 {
-    uint32_t actualSize = 0;
+    return idx > 0;
+}
 
-    // Reclaim all the space
-    bucket.resize(bucket.capacity());
-    for (uploaded_string& str : bucket)
-    {
-        if (itr == vals.end())
-            break;
+bool pattern_t::write(uploaded_string& output) {
+    if (!has_next())
+        return false;
 
-        str.char_count = itr->full_length;
-        str.hash = 0;
+    output.reset();
 
-        memset(str.words, 0, sizeof(str.words));
+    // TODO: Figure out a way to not have to iterate twice
 
-        size_t ofs = 0;
-        for (uint32_t i = 0; i < itr->elems.size(); ++i) {
-            memcpy(reinterpret_cast<char*>(str.words) + ofs, itr->elems[i].data(), itr->elems[i].size());
-            ofs += itr->elems[i].size();
+    node_t* h = head;
+    size_t offset = 0;
+
+    h = tail;
+    while (h != nullptr) {
+        offset = std::max(offset, h->apply(reinterpret_cast<char*>(output.words), h->start_offset()));
+
+        if (!h->locked())
+            h->move_next();
+
+        node_t* prev = h->prev;
+
+        if (!h->has_next()) {
+
+            if (prev != nullptr) {
+                prev->unlock();
+                h->lock();
+
+                if (prev->has_next())
+                    h->reset();
+            }
+        }
+        else {
+            if (h->next != nullptr && !h->locked()) {
+                h->lock();
+                tail->unlock();
+            }
         }
 
-        ++actualSize;
-        ++itr;
+        h = prev;
     }
 
-    // Resize down so we don't advertise as having more data than we really have
-    bucket.resize(actualSize);
+    output.char_count = int32_t(offset);
+    --idx;
+    return true;
 }

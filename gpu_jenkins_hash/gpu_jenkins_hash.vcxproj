@@ -169,6 +169,7 @@
     <ClInclude Include="metrics.hpp" />
     <ClInclude Include="pattern.hpp" />
     <ClInclude Include="renderdoc.hpp" />
+    <ClInclude Include="rolling_iterator.hpp" />
     <ClInclude Include="string_view_range.hpp" />
     <ClInclude Include="targetver.h" />
     <ClInclude Include="uploaded_string.hpp" />
