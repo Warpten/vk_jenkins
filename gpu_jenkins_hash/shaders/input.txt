@@ -1,1 +1,1 @@
-interface/worldmap/zuldazarraidd/zuldazarraid_[a-z|0-9]{1,4}.blp
+interface/worldmap/zuldazarraidd/zuldazarraid_[a-z|0-9]{1,1}.blp

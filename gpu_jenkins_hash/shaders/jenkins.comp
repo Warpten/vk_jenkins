@@ -10,9 +10,9 @@
 // This size is a specialization constant and fed through pipeline creation. The default value is 64.
 layout(local_size_x_id = 1) in;
 // This size is a specialization constant and fed through pipeline creation. The default value is 1.
-layout(local_size_y_id = 1) in;
+layout(local_size_y_id = 2) in;
 // This size is a specialization constant and fed through pipeline creation. The default value is 1.
-layout(local_size_z_id = 1) in;
+layout(local_size_z_id = 3) in;
 
 struct input_words {
     int char_count; // Number of bytes in the string

@@ -53,13 +53,19 @@ public:
     }
 };
 
+JenkinsGpuHash app;
+
 int main(int argc, char* argv[]) {
     options_t options(argv, argv + argc); //-V104
 
     // --frames denotes the amount of frames of data pushed to the GPU
     // while it is already calculating. This is similar to triple buffering in graphics.
-    JenkinsGpuHash app(options.get("--frames", 3));
+    app = JenkinsGpuHash(options.get("--frames", 3));
     VkPhysicalDeviceLimits const& limits = app.getDeviceProperties().limits;
+
+    std::atexit([]() {
+        app.cleanup();
+    });
 
     if (options.has("--help") || !options.has("--input")) {
         std::cout
@@ -167,10 +173,6 @@ int main(int argc, char* argv[]) {
     app.setDataProvider([&input](uploaded_string* data, size_t capacity) -> size_t {
         size_t i = 0;
 
-#if _DEBUG
-        auto s = std::chrono::high_resolution_clock::now();
-#endif
-
         memset(data, 0, sizeof(uploaded_string) * capacity);
         for (; i < capacity && input.hasNext(); ++i) {
 
@@ -178,15 +180,9 @@ int main(int argc, char* argv[]) {
             if (!input.next(element))
                 break;
 
-            // std::cout << element.value() << std::endl;
-
             ++data;
         }
 
-#if _DEBUG
-        auto d = std::chrono::high_resolution_clock::now() - s;
-        std::cout << ">> Uploaded " << i << " values in " << std::chrono::duration_cast<std::chrono::microseconds>(d).count() << " us.\n";
-#endif
         return i;
     });
 

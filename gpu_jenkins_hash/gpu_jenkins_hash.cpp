@@ -58,43 +58,40 @@ void JenkinsGpuHash::run()
     renderdoc::init();
 
     mainLoop();
-    cleanup();
+
+    // called by atexit
+    // cleanup();
 }
 
 void JenkinsGpuHash::createBuffers()
 {
     for (Frame& frame : _frames) {
-        frame.hostBuffer.setMaximumElementCount(params.getCompleteDataSize());
-        frame.deviceBuffer.setMaximumElementCount(params.getCompleteDataSize());
-
-        // Staging buffer
-        createBuffer(
+        // Input staging buffer
+        frame.hostInputBuffer.create(_device.allocator,
             VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
-            &frame.hostBuffer.buffer,
-            &frame.hostBuffer.memory,
-            frame.hostBuffer.max_size);
+            VMA_MEMORY_USAGE_CPU_TO_GPU,
+            params.getCompleteDataSize() * frame.hostInputBuffer.item_size);
 
-        // Device buffer
-        createBuffer(
+        frame.hostOutputBuffer.create(_device.allocator,
+            VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            VMA_MEMORY_USAGE_GPU_TO_CPU,
+            params.getCompleteDataSize() * frame.hostOutputBuffer.item_size);
+
+        frame.deviceBuffer.create(_device.allocator,
             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-            &frame.deviceBuffer.buffer,
-            &frame.deviceBuffer.memory,
-            frame.deviceBuffer.max_size);
+            VMA_MEMORY_USAGE_GPU_ONLY,
+            params.getCompleteDataSize() * frame.deviceBuffer.item_size);
 
         // Input buffer on binding 0
         frame.deviceBuffer.binding = 0;
 
-        frame.hostBuffer.map(_device.device);
+        frame.hostInputBuffer.map(_device.allocator);
+        frame.hostOutputBuffer.map(_device.allocator);
     }
 
-    createBuffer(
+    dispatchBuffer.create(_device.allocator,
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-        &dispatchBuffer.buffer,
-        &dispatchBuffer.memory,
-        sizeof(VkDispatchIndirectCommand));
+        VMA_MEMORY_USAGE_GPU_ONLY, sizeof(VkDispatchIndirectCommand));
 }
 
 void JenkinsGpuHash::mainLoop()
@@ -109,17 +106,24 @@ void JenkinsGpuHash::mainLoop()
 
 		std::cout << ">> Initializing (this may take a while, sit tight!)" << std::endl;
 
-        for (Frame& frame : _frames) {
-
+        // Execute each frame once so that we can have output for the main loop
+        for (Frame& currentFrame : _frames) {
+            // begin the frame
             beginFrame();
 
-            size_t written_count = provide_data(frame.hostBuffer.data);
-            _frames[_currentFrame].hostBuffer.item_count = written_count;
+            // Upload data
+            size_t written_count = provide_data(currentFrame.hostInputBuffer.data);
+            currentFrame.hostInputBuffer.item_count = written_count;
+
+            // Nothing left to process?
             if (written_count == 0)
                 break;
 
+            // Increment metrics
             metrics::increment(written_count);
-            frame.hostBuffer.flush(_device.device);
+
+            // Flush memory to the device
+            currentFrame.hostInputBuffer.flush(_device.allocator, written_count * currentFrame.hostInputBuffer.item_count);
 
             result = submitFrame();
 #if _DEBUG
@@ -138,18 +142,22 @@ void JenkinsGpuHash::mainLoop()
 			Frame& currentFrame = _frames[_currentFrame];
 
             // Handle previous output
-			currentFrame.hostBuffer.invalidate(_device.device);
-            _outputHandler(currentFrame.hostBuffer.data, currentFrame.hostBuffer.item_count);
+			currentFrame.hostOutputBuffer.invalidate(_device.allocator);
+            _outputHandler(currentFrame.hostOutputBuffer.data, currentFrame.hostInputBuffer.item_count);
 
             // Write new input
-            size_t written_count = provide_data(currentFrame.hostBuffer.data);
-			currentFrame.hostBuffer.item_count = written_count;
+            size_t written_count = provide_data(currentFrame.hostInputBuffer.data);
+            currentFrame.hostInputBuffer.item_count = written_count;
+
+            // Nothing left to process?
             if (written_count == 0)
                 break;
 
-            metrics::increment(written_count);
-			currentFrame.hostBuffer.flush(_device.device);
+			currentFrame.hostInputBuffer.flush(_device.allocator);
 
+            metrics::increment(written_count);
+
+            // execute frame
             result = submitFrame();
 #if _DEBUG
             if (result != VK_SUCCESS)
@@ -168,11 +176,12 @@ void JenkinsGpuHash::mainLoop()
 
             Frame& frame = _frames[_currentFrame++];
 
-            if (frame.hostBuffer.item_count == 0)
+            // There was no data in the pipe
+            if (frame.hostInputBuffer.item_count == 0)
                 continue;
 
             vkWaitForFences(_device.device, 1, &frame.flightFence, VK_TRUE, UINT64_MAX);
-            _outputHandler(frame.hostBuffer.data, frame.hostBuffer.item_count);
+            _outputHandler(frame.hostOutputBuffer.data, frame.hostOutputBuffer.item_count);
 
         }
 
@@ -185,62 +194,6 @@ void JenkinsGpuHash::mainLoop()
     }
 
     vkDeviceWaitIdle(_device.device);
-}
-
-VkResult JenkinsGpuHash::createBuffer(VkBufferUsageFlags usageFlags, VkMemoryPropertyFlags memoryPropertyFlags, VkBuffer *buffer, VkDeviceMemory *memory, VkDeviceSize size, void *data)
-{
-    // Create the buffer handle
-    VkBufferCreateInfo bufferCreateInfo{};
-    bufferCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufferCreateInfo.usage = usageFlags;
-    bufferCreateInfo.size = size;
-    bufferCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    if (vkCreateBuffer(_device.device, &bufferCreateInfo, nullptr, buffer) != VK_SUCCESS)
-        throw std::runtime_error("unable to create buffer");
-
-    // Create the memory backing up the buffer handle
-    VkPhysicalDeviceMemoryProperties deviceMemoryProperties;
-    vkGetPhysicalDeviceMemoryProperties(_device.physicalDevice, &deviceMemoryProperties);
-    VkMemoryRequirements memReqs;
-    VkMemoryAllocateInfo memAlloc{};
-    memAlloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    vkGetBufferMemoryRequirements(_device.device, *buffer, &memReqs);
-    memAlloc.allocationSize = memReqs.size;
-    // Find a memory type index that fits the properties of the buffer
-    bool memTypeFound = false;
-    for (uint32_t i = 0; i < deviceMemoryProperties.memoryTypeCount; i++) {
-        if ((memReqs.memoryTypeBits & 1) == 1) {
-            if ((deviceMemoryProperties.memoryTypes[i].propertyFlags & memoryPropertyFlags) == memoryPropertyFlags) {
-                memAlloc.memoryTypeIndex = i;
-                memTypeFound = true;
-            }
-        }
-        memReqs.memoryTypeBits >>= 1;
-    }
-
-    if (!memTypeFound)
-        throw std::runtime_error("memory type not found");
-
-    if (vkAllocateMemory(_device.device, &memAlloc, nullptr, memory) != VK_SUCCESS)
-    {
-        std::stringstream s;
-        s << "Unable to allocate memory for the buffer(" << size << " bytes requested)";
-
-        throw std::runtime_error(s.str().c_str());
-    }
-
-    if (data != nullptr) {
-        void *mapped;
-        if (vkMapMemory(_device.device, *memory, 0, size, 0, &mapped) != VK_SUCCESS)
-            throw std::runtime_error("Unable to map buffer");
-        memcpy(mapped, data, static_cast<size_t>(size));
-        vkUnmapMemory(_device.device, *memory);
-    }
-
-    if (vkBindBufferMemory(_device.device, *buffer, *memory, 0) != VK_SUCCESS)
-        throw std::runtime_error("unable to bind buffer memory");
-
-    return VK_SUCCESS;
 }
 
 VkShaderModule JenkinsGpuHash::createShaderModule(const std::vector<char>& code)
@@ -260,9 +213,9 @@ VkShaderModule JenkinsGpuHash::createShaderModule(const std::vector<char>& code)
 void JenkinsGpuHash::cleanup()
 {
     for (Frame& frame : _frames)
-        frame.clear(_device.device);
+        frame.clear(_device.device, _device.allocator);
 
-    dispatchBuffer.release(_device.device);
+    dispatchBuffer.release(_device.allocator);
 
     vkDestroyCommandPool(_device.device, _commandPool, nullptr);
 
@@ -271,6 +224,8 @@ void JenkinsGpuHash::cleanup()
 
     vkDestroyPipeline(_device.device, _pipeline.pipeline, nullptr);
     vkDestroyPipelineLayout(_device.device, _pipeline.layout, nullptr);
+
+    vmaDestroyAllocator(_device.allocator);
 
     vkDestroyDevice(_device.device, nullptr);
 
@@ -388,6 +343,13 @@ void JenkinsGpuHash::createLogicalDevice()
         throw std::runtime_error("failed to create logical device!");
     }
 
+    VmaAllocatorCreateInfo allocInfo{};
+    allocInfo.device = _device.device;
+    allocInfo.frameInUseCount = 0;
+    allocInfo.pHeapSizeLimit = nullptr;
+    allocInfo.physicalDevice = _device.physicalDevice;
+    vmaCreateAllocator(&allocInfo, &_device.allocator);
+
     vkGetDeviceQueue(_device.device, indices.computeFamily.value(), 0, &_computeQueue);
 }
 
@@ -444,8 +406,10 @@ void JenkinsGpuHash::createComputePipeline()
     auto computeShaderCode = readFile("shaders/comp.spv");
     VkShaderModule computeShaderModule = createShaderModule(computeShaderCode);
 
-    std::vector<VkSpecializationMapEntry> specMapEntries {
-        VkSpecializationMapEntry { 1, 0, 4 } // Constant ID, offset, size
+    std::vector<VkSpecializationMapEntry> specMapEntries{
+        VkSpecializationMapEntry{ 1, 0, 4 }, // Constant ID, offset, size
+        VkSpecializationMapEntry{ 2, 4, 4 }, // Constant ID, offset, size
+        VkSpecializationMapEntry{ 3, 8, 4 }, // Constant ID, offset, size
     };
 
     VkSpecializationInfo shaderSpecInfo{};
@@ -482,7 +446,7 @@ void JenkinsGpuHash::createComputePipeline()
 
         // Reuse the first frame's staging buffer for this upload
         VkDispatchIndirectCommand dispatch_args{ params.workgroupCount[0], params.workgroupCount[1], params.workgroupCount[2] };
-        _frames[0].hostBuffer.write_raw(_device.device, &dispatch_args, sizeof(VkDispatchIndirectCommand));
+        _frames[0].hostInputBuffer.write_raw(_device.allocator, &dispatch_args, sizeof(VkDispatchIndirectCommand));
 
         VkCommandBufferAllocateInfo allocInfo{};
         allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -502,7 +466,7 @@ void JenkinsGpuHash::createComputePipeline()
         copyRegion.size = sizeof(VkDispatchIndirectCommand);
         copyRegion.dstOffset = 0;
         copyRegion.srcOffset = 0;
-        vkCmdCopyBuffer(uploadCmd, _frames[0].hostBuffer.buffer, dispatchBuffer.buffer, 1, &copyRegion);
+        vkCmdCopyBuffer(uploadCmd, _frames[0].hostInputBuffer.buffer, dispatchBuffer.buffer, 1, &copyRegion);
 
         vkEndCommandBuffer(uploadCmd);
 
@@ -552,10 +516,10 @@ void JenkinsGpuHash::createCommandBuffers()
         frame.deviceBuffer.update(_device.device);
 
         VkBufferCopy copyRegion{};
-        copyRegion.size = frame.hostBuffer.max_size;
+        copyRegion.size = frame.hostInputBuffer.allocation_info.size;
         copyRegion.dstOffset = 0;
         copyRegion.srcOffset = 0;
-        vkCmdCopyBuffer(frame.commandBuffer, frame.hostBuffer.buffer, frame.deviceBuffer.buffer, 1, &copyRegion);
+        vkCmdCopyBuffer(frame.commandBuffer, frame.hostInputBuffer.buffer, frame.deviceBuffer.buffer, 1, &copyRegion);
 
         VkBufferMemoryBarrier bufferBarrier{};
         bufferBarrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
@@ -601,12 +565,12 @@ void JenkinsGpuHash::createCommandBuffers()
             1, &bufferBarrier,
             0, nullptr);
 
-        vkCmdCopyBuffer(frame.commandBuffer, frame.deviceBuffer.buffer, frame.hostBuffer.buffer, 1, &copyRegion);
+        vkCmdCopyBuffer(frame.commandBuffer, frame.deviceBuffer.buffer, frame.hostOutputBuffer.buffer, 1, &copyRegion);
 
         // Barrier to ensure that buffer copy is finished before host reading from it
         bufferBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         bufferBarrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
-        bufferBarrier.buffer = frame.hostBuffer.buffer;
+        bufferBarrier.buffer = frame.hostOutputBuffer.buffer;
         bufferBarrier.size = VK_WHOLE_SIZE;
         bufferBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         bufferBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -745,7 +709,7 @@ void JenkinsGpuHash::createSyncObjects()
         VkSemaphoreCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 
-        vkCreateSemaphore(_device.device, &createInfo, nullptr, &frame.semaphore);
+        vkCreateSemaphore(_device.device, &createInfo, nullptr, &frame.transferSemaphore);
 
         VkFenceCreateInfo fenceInfo{};
         fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;

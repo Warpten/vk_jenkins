@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "buffer.hpp"
 #include "uploaded_string.hpp"
 
 #include <vulkan/vulkan.h>
@@ -28,6 +29,7 @@ struct jenkins_shader_64 {
 struct Device {
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
     VkDevice device = VK_NULL_HANDLE;
+    VmaAllocator allocator = VK_NULL_HANDLE;
     VkPhysicalDeviceProperties properties = { 0 };
 };
 
@@ -51,6 +53,10 @@ struct QueueFamilyIndices {
 
 class JenkinsGpuHash {
 public:
+    JenkinsGpuHash() {
+
+    }
+
     JenkinsGpuHash(size_t frameCount) {
         _frames.resize(frameCount);
 
@@ -102,6 +108,8 @@ public:
     params_t const& getParams() const { return params; }
     size_t getFrameCount() const { return _frames.size(); }
 
+    void cleanup();
+
 private:
 
     params_t params;
@@ -114,6 +122,7 @@ private:
 
     Device _device;
 
+    VkQueue _transferQueue = VK_NULL_HANDLE;
     VkQueue _computeQueue = VK_NULL_HANDLE;
 
     Descriptor _descriptor;
@@ -126,20 +135,24 @@ private:
 
     struct Frame {
         buffer_t<uploaded_string> deviceBuffer;
-        buffer_t<uploaded_string> hostBuffer;
+        buffer_t<uploaded_string> hostInputBuffer;
+        buffer_t<uploaded_string> hostOutputBuffer;
 
         VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+        VkCommandBuffer readTransferCommandBuffer = VK_NULL_HANDLE;
+        VkCommandBuffer writeTransferCommandBuffer = VK_NULL_HANDLE;
 
-        VkSemaphore semaphore = VK_NULL_HANDLE;
+        VkSemaphore transferSemaphore = VK_NULL_HANDLE;
 
         VkFence flightFence = VK_NULL_HANDLE;
 
-        void clear(VkDevice device) {
+        void clear(VkDevice device, VmaAllocator allocator) {
             vkDestroyFence(device, flightFence, nullptr);
-            vkDestroySemaphore(device, semaphore, nullptr);
+            vkDestroySemaphore(device, transferSemaphore, nullptr);
 
-            deviceBuffer.release(device);
-            hostBuffer.release(device);
+            deviceBuffer.release(allocator);
+            hostInputBuffer.release(allocator);
+            hostOutputBuffer.release(allocator);
         }
     };
     buffer_t<VkDispatchIndirectCommand> dispatchBuffer;
@@ -147,8 +160,6 @@ private:
     std::vector<Frame> _frames;
 
     void mainLoop();
-
-    void cleanup();
 
     void createInstance();
 
@@ -168,8 +179,6 @@ private:
     VkResult submitFrame();
 
     void createBuffers();
-
-    VkResult createBuffer(VkBufferUsageFlags usageFlags, VkMemoryPropertyFlags memoryPropertyFlags, VkBuffer *buffer, VkDeviceMemory *memory, VkDeviceSize size, void *data = nullptr);
 
     VkShaderModule createShaderModule(const std::vector<char>& code);
 

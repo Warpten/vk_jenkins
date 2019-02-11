@@ -8,16 +8,16 @@
 namespace metrics {
     static std::chrono::high_resolution_clock::time_point _start;
     static std::chrono::high_resolution_clock::time_point _end;
-    static std::atomic<uint64_t> counter;
+    static uint64_t counter;
 
     void start() {
         _start = std::chrono::high_resolution_clock::now();
-        counter.store(0, std::memory_order_relaxed);
+        counter = 0;
     }
 
     double hashes_per_second() {
         auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(_end - _start).count();
-        return counter.load(std::memory_order_acquire) / (duration / 1.0e9);
+        return counter / (duration / 1.0e9);
     }
 
     void stop() {
@@ -46,12 +46,10 @@ namespace metrics {
 
     void increment(uint64_t count) {
 
-        // counter.atomic_store(counter.load(memory_order_seq_cst) + count, memory_order_seq_cst);
-
         counter += count;
     }
 
     uint64_t total() {
-        return counter.load(std::memory_order_acquire);
+        return counter;
     }
 }
