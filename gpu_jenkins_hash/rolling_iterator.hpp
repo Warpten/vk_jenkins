@@ -17,7 +17,7 @@ public:
 
     rolling_iterator(Iterator begin, Iterator end, std::vector<Iterator>&& iterators) : itrs(std::move(iterators)), end(end), begin(begin) {
         values.resize(itrs.size() + 1);
-        for (uint32_t i = 0; i < itrs.size(); ++i)
+        for (size_t i = 0; i < itrs.size(); ++i)
             values[i] = *(itrs[i]);
 
         *values.rbegin() = ValueType{};
@@ -53,6 +53,8 @@ public:
         values = o.values;
         controllers = o.controllers;
         done = o.done;
+
+		return *this;
     }
 
     rolling_iterator& operator = (rolling_iterator const&& o) {
@@ -77,7 +79,7 @@ public:
     }
 
     void reset() {
-        for (uint32_t i = 0; i < itrs.size(); ++i) {
+        for (size_t i = 0; i < itrs.size(); ++i) {
             itrs[i] = begin;
             values[i] = *begin;
             controllers[i] = (i + 1) == itrs.size();
@@ -104,7 +106,9 @@ public:
         // when a character is done, it resets, the previous character advances once, and then
         //  the last character iterates again
         // when the first character is done, that's our exit condition
-        for (int32_t i = int32_t(itrs.size() - 1); i >= 0; --i)
+
+		// yoda condition, when i reaches 0 it underflows to size_t::max.
+        for (size_t i = itrs.size() - 1; i < itrs.size(); --i)
         {
             Iterator& itr = itrs[i];
             if (controllers[i])
@@ -127,7 +131,7 @@ public:
             else
             {
                 // if not last and not locked
-                if (i + 1 < int32_t(itrs.size()) && controllers[i])
+                if (i + 1 < itrs.size() && controllers[i])
                 {
                     // lock current
                     controllers[i] = false;
@@ -168,7 +172,7 @@ inline bool operator == (rolling_iterator<Iterator, ValueType> const& lhs, rolli
     if (lhs.end != rhs.end)
         return false;
 
-    for (uint32_t i = 0; i < lhs.itrs.size(); ++i)
+    for (size_t i = 0; i < lhs.itrs.size(); ++i)
         if (lhs.itrs[i] != rhs.itrs[i])
             return false;
 

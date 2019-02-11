@@ -24,7 +24,7 @@ struct node_t {
     virtual bool has_next() = 0;
     virtual void move_next() = 0;
 
-    virtual size_t count() = 0;
+    virtual uint64_t count() = 0;
 
     node_t* next = nullptr;
     node_t* prev = nullptr;
@@ -38,7 +38,6 @@ struct node_t {
     void unlock() {
         l = false;
     }
-
 
     size_t end_offset() const { return (prev == nullptr ? 0 : prev->end_offset()) + length(); }
     size_t start_offset() const { return prev == nullptr ? 0 : prev->end_offset(); }
@@ -66,7 +65,7 @@ public:
     bool has_next() override { return false; }
     void move_next() override { }
 
-    size_t count() override { return 1; }
+	uint64_t count() override { return 1; }
 
     std::string_view current() const override { return std::string_view(val[0].data(), val[0].size()); }
 
@@ -78,8 +77,8 @@ struct size_specified_range_t : public node_t {
     virtual ~size_specified_range_t() { }
 
 protected:
-    uint32_t min_count;
-    uint32_t max_count;
+    size_t min_count;
+	size_t max_count;
 
 public:
     std::string_view parse(std::string_view view) override;
@@ -101,7 +100,7 @@ public:
     bool has_next() override;
     void move_next() override;
 
-    size_t count() override { return vals.size(); }
+	uint64_t count() override { return vals.size(); }
 
     std::string_view current() const override { return std::string_view(itr->data(), itr->size()); }
     size_t length() const override { return itr->size(); }
@@ -123,7 +122,7 @@ public:
     bool has_next() override;
     void move_next() override;
 
-    size_t count() override;
+	uint64_t count() override;
 
     std::string_view current() const override { return std::string_view(itr.current(), itr.size()); }
     size_t length() const override { return itr.size(); }
@@ -135,7 +134,7 @@ private:
     node_t* tail = nullptr;
 
     rolling_iterator<std::vector<std::vector<char>>::const_iterator> ritr;
-    size_t idx = 0;
+	uint64_t idx = 0;
 
 public:
     pattern_t(std::string_view regex);
@@ -193,7 +192,7 @@ public:
         head = tail = nullptr;
     }
 
-    size_t count() const;
+	uint64_t count() const;
 
     bool has_next() const;
 

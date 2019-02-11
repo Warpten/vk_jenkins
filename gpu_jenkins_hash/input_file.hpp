@@ -19,9 +19,8 @@ public:
                 return false;
 
             current.load(line);
-// #if _DEBUG
-            std::cout << "Loaded pattern '" << line << "' (" << current.count() << " possible values).\n";
-// #endif
+
+            std::cout << ">> Loaded pattern '" << line << "' (" << current.count() << " possible values).\n";
         }
         return current.write(output);
     }

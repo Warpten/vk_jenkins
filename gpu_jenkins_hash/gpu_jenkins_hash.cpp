@@ -107,6 +107,8 @@ void JenkinsGpuHash::mainLoop()
 
         VkResult result;
 
+		std::cout << ">> Initializing (this may take a while, sit tight!)" << std::endl;
+
         for (Frame& frame : _frames) {
 
             beginFrame();
@@ -126,23 +128,27 @@ void JenkinsGpuHash::mainLoop()
 #endif
         }
 
-        std::cout << "main work" << std::endl;
         _currentFrame = 0;
+
+		std::cout << ">> Hashing ..." << std::endl;
 
         while (true) {
             beginFrame();
 
+			Frame& currentFrame = _frames[_currentFrame];
+
             // Handle previous output
-            _outputHandler(_frames[_currentFrame].hostBuffer.data, _frames[_currentFrame].hostBuffer.item_count);
+			currentFrame.hostBuffer.invalidate(_device.device);
+            _outputHandler(currentFrame.hostBuffer.data, currentFrame.hostBuffer.item_count);
 
             // Write new input
-            size_t written_count = provide_data(_frames[_currentFrame].hostBuffer.data);
-            _frames[_currentFrame].hostBuffer.item_count = written_count;
+            size_t written_count = provide_data(currentFrame.hostBuffer.data);
+			currentFrame.hostBuffer.item_count = written_count;
             if (written_count == 0)
                 break;
 
             metrics::increment(written_count);
-            _frames[_currentFrame].hostBuffer.flush(_device.device);
+			currentFrame.hostBuffer.flush(_device.device);
 
             result = submitFrame();
 #if _DEBUG
@@ -151,7 +157,7 @@ void JenkinsGpuHash::mainLoop()
 #endif
         }
 
-        std::cout << "collecting remnants" << std::endl;
+        std::cout << ">> Finalizing ..." << std::endl;
 
         // We may have left the loop because we got no data to send,
         // but there is still some data left in the pipe
@@ -171,6 +177,8 @@ void JenkinsGpuHash::mainLoop()
         }
 
         metrics::stop();
+
+		std::cout << ">> Done!" << std::endl;
     }
     catch (std::exception const& e) {
         std::cerr << e.what() << std::endl;

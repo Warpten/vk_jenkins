@@ -74,7 +74,7 @@ std::string_view size_specified_range_t::parse(std::string_view view)
     if (comma == std::string::npos)
     {
         uint32_t val = std::stoi(std::string(work_view));
-        min_count = max_count = val;
+        min_count = max_count = val; //-V101
     }
     else
     {
@@ -185,6 +185,7 @@ std::string_view varying_range_t::parse(std::string_view view) {
         splitterOfs = find_delimiter(work_view, '|', splitterOfs + 1);
         if (splitterOfs != std::string::npos) {
             range_handler(work_view.substr(startOffset, splitterOfs - startOffset));
+			startOffset = splitterOfs + 1;
         }
         else {
             range_handler(work_view.substr(startOffset));
@@ -202,18 +203,21 @@ std::string_view varying_range_t::parse(std::string_view view) {
 }
 
 
-size_t varying_range_t::count() {
+uint64_t varying_range_t::count() {
     if (min_count == max_count) {
-        return size_t(std::pow(universe.size(), min_count));
+		auto s = std::pow(universe.size(), min_count);
+        return uint64_t(s);
     }
 
-    size_t u = universe.size();
+	uint64_t u = universe.size();
 
     if (min_count == 1) {
-        return size_t((std::pow(u, max_count) - 1) * u) / (u - 1);
+		auto s = ((std::pow(u, max_count) - 1) * u) / (u - 1);
+        return uint64_t(s);
     }
 
-    return size_t(std::pow(u, max_count - 1) - std::pow(u, min_count)) / (u - 1);
+	auto s = (std::pow(u, max_count - 1) - std::pow(u, min_count)) / (u - 1);
+	return uint64_t(s);
 }
 
 size_t varying_range_t::apply(char* storage, size_t offset) {
@@ -319,9 +323,9 @@ void pattern_t::load(std::string_view regex)
     idx = count();
 }
 
-size_t pattern_t::count() const
+uint64_t pattern_t::count() const
 {
-    size_t count = 1;
+	uint64_t count = 1;
     node_t* h = head;
     while (h != nullptr) {
         count *= h->count();

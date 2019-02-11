@@ -76,9 +76,14 @@ public:
         uint32_t workgroupCount[3] = { 0, 0, 0 };
         uint32_t workgroupSize[3] = { 64, 0, 0 };
 
-        size_t getCompleteDataSize() const {
-            return workgroupSize[0] * workgroupSize[1] * workgroupSize[2]
-                * workgroupCount[0] * workgroupCount[1] * workgroupCount[2];
+		size_t getCompleteDataSize() const {
+			size_t promotedSize { workgroupSize[0] }; //-V101
+			promotedSize *= workgroupSize[1]; //-V101
+			promotedSize *= workgroupSize[2]; //-V101
+			promotedSize *= workgroupCount[0]; //-V101
+			promotedSize *= workgroupCount[1]; //-V101
+			promotedSize *= workgroupCount[2]; //-V101
+			return promotedSize;
         }
     };
 

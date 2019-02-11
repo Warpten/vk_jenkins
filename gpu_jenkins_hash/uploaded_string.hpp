@@ -112,7 +112,7 @@ struct buffer_t
 
     }
 
-    void invalidate() {
+    void invalidate(VkDevice device) {
         VkMappedMemoryRange mappedRange{};
         mappedRange.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
         mappedRange.memory = memory;

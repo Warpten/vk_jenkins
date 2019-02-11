@@ -14,14 +14,6 @@
 
 #include "lookup3.hpp"
 
-template <typename T, size_t N>
-std::array<T, N> make_array(std::initializer_list<T> list) {
-    std::array<T, N> arr;
-    for (uint32_t i = 0; i < N; ++i)
-        arr[i] = list[i];
-    return arr;
-}
-
 struct options_t {
 private:
     std::vector<char*> _vals;
@@ -62,8 +54,6 @@ public:
 };
 
 int main(int argc, char* argv[]) {
-    pattern_t pattern("[a-c]{1,3}");
-
     options_t options(argv, argv + argc); //-V104
 
     // --frames denotes the amount of frames of data pushed to the GPU
@@ -168,9 +158,9 @@ int main(int argc, char* argv[]) {
     std::cout << "\n\n";
 
     std::cout << "Hardware limits applied to user-defined configuration...\n";
-    std::cout << "\nWorkgroup count: { " << app.getParams().workgroupCount[0] << ", " << app.getParams().workgroupCount[1] << ", " << app.getParams().workgroupCount[2] << " }";
-    std::cout << "\nWorkgroup count: { " << app.getParams().workgroupSize[0] << ", " << app.getParams().workgroupSize[1] << ", " << app.getParams().workgroupSize[2] << " }";
-    std::cout << "\nNumber of lookahead frames: " << app.getFrameCount();
+    std::cout << "\n>> Workgroup count: { " << app.getParams().workgroupCount[0] << ", " << app.getParams().workgroupCount[1] << ", " << app.getParams().workgroupCount[2] << " }";
+    std::cout << "\n>> Workgroup sizes: { " << app.getParams().workgroupSize[0] << ", " << app.getParams().workgroupSize[1] << ", " << app.getParams().workgroupSize[2] << " }";
+    std::cout << "\n>> Number of lookahead frames: " << app.getFrameCount();
 
     std::cout << std::endl;
 
@@ -195,7 +185,7 @@ int main(int argc, char* argv[]) {
 
 #if _DEBUG
         auto d = std::chrono::high_resolution_clock::now() - s;
-        // std::cout << "Uploading " << i << " values in " << std::chrono::duration_cast<std::chrono::microseconds>(d).count() << " us.\n";
+        std::cout << ">> Uploaded " << i << " values in " << std::chrono::duration_cast<std::chrono::microseconds>(d).count() << " us.\n";
 #endif
         return i;
     });
@@ -205,7 +195,7 @@ int main(int argc, char* argv[]) {
     app.setOutputHandler([&output, &options, &failed_hashes](uploaded_string* data, size_t count) -> void {
         if (options.has("--validate"))
         {
-            for (uint32_t i = 0; i < count; ++i)
+            for (size_t i = 0; i < count; ++i)
             {
                 uploaded_string& itr = data[i];
 
@@ -226,6 +216,8 @@ int main(int argc, char* argv[]) {
         std::cerr << e.what() << std::endl;
         return EXIT_FAILURE;
     }
+
+	std::cout << ">> RESULTS:" << std::endl;
 
     if (failed_hashes.size() > 0 && options.has("--validate")) {
         std::cout << "Examples of failed hashes: " << std::endl;
